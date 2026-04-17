@@ -35,9 +35,13 @@ ENV/
 *.pth
 *.pt
 
-# Large dataset directories (add specific paths as needed)
-data/raw/
-data/processed/
+# 元動画・元画像（絶対にgit addしない）
+data/
+
+# 一時作業ファイル
+tmp/
+
+# 実験結果の大きなファイル
 experiments/outputs/
 experiments/renders/
 
