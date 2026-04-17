@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+pip-log.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 3DGS / point cloud data
+*.ply
+*.pcd
+*.las
+*.laz
+*.e57
+*.xyz
+*.pts
+*.bin
+*.ckpt
+*.pth
+*.pt
+
+# Large dataset directories (add specific paths as needed)
+data/raw/
+data/processed/
+experiments/outputs/
+experiments/renders/
+
+# Colmap / LLFF
+sparse/
+dense/
+images_*/
+database.db
+
+# Output / results
+output/
+results/
+renders/
+checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env files
+.env
+.env.*
+secrets.json
+
+# Logs
+*.log
+logs/
