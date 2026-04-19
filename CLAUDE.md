@@ -14,15 +14,14 @@
 
 | 項目 | 内容 |
 |---|---|
+| 接続構成 | 自宅PC → SSH → 踏み台サーバ → 研究室GPUマシン |
 | コンテナ | Docker（Linux上で稼働） |
 | GPU | NVIDIA RTX A6000（VRAM 48GB） |
 | Python | 3.10（システムPython） |
 | PyTorch | 2.5.1 + CUDA 12.1 |
 | 3DGSフレームワーク | [graphdeco-inria/gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) |
-| 前処理 | FFmpeg 4.4.2、COLMAP 3.7（CUDAなし・要再ビルド）|
+| 前処理 | FFmpeg 4.4.2、COLMAP 3.9（CUDA対応ビルド）、HLoc 1.5 |
 | UI | Streamlit、noVNC |
-
-> **注意**: COLMAP は現状CUDAなしビルドのため、大規模シーンでは処理が遅くなります。Dockerfileを再整備するタイミングでCUDA対応ビルドに切り替えてください。
 
 ---
 
@@ -89,6 +88,7 @@
 
 ### ファイル操作
 - `data/` 配下のファイルは**絶対に削除しない**こと（元動画・元画像が入っている）。
+- `storage/` 配下のフォルダ・ファイルは**変更・削除しない**こと。
 - `/opt/gaussian-splatting/` の**ソースコードを直接書き換えない**こと。変更が必要な場合は `/workspace/` にコピーしてから行うこと。
 - 一時的な作業ファイルは **`/workspace/tmp/`** にまとめること。
 - 大きなファイルはコピーせず、**シンボリックリンクや元パスの参照**で対応してストレージを節約すること。
@@ -129,5 +129,5 @@ python scripts/run_train.py --source experiments/YYYYMMDD_HHMMSS_scene1/
 
 - ユーザーはGitHub・Docker・Claudeの初心者です。専門用語は丁寧に説明してください。
 - Docker・Git操作に関する質問が多い可能性があります。わかりやすく答えてください。
-- HLocはまだ未インストールです。導入時はDockerfileへの追記も提案してください。
-- COLMAP のCUDA対応ビルドはDockerfile整備時に対応予定です。
+- HLocは `/opt/hloc/` にインストール済みです（バージョン 1.5）。
+- COLMAP は 3.9（CUDA対応ビルド）に更新済みです。
