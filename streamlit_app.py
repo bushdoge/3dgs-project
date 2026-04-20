@@ -1,16 +1,20 @@
+# ホーム画面：ナビゲーション・ToDo管理・使用方法の表示
+
+import json
+import os
 import streamlit as st
-import subprocess
-import time
-import re
 from datetime import datetime
 
+TODO_FILE = "/workspace/tmp/todo.json"
+
 st.set_page_config(
-    page_title="GPU Monitor",
-    page_icon="⚡",
+    page_title="3DGS Lab",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
+# ── スタイル ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
@@ -20,393 +24,238 @@ st.markdown("""
     background-color: #0a0e1a;
     color: #e0e6f0;
   }
-
   .block-container { padding: 1.5rem 2rem; }
 
-  .header-title {
-    font-size: 2rem;
-    font-weight: 700;
-    letter-spacing: 0.15em;
-    color: #00e5ff;
-    text-shadow: 0 0 12px #00e5ff88;
-    margin-bottom: 0;
+  .home-title {
+    font-size: 2.2rem; font-weight: 700; letter-spacing: 0.15em;
+    color: #00e5ff; text-shadow: 0 0 12px #00e5ff88; margin-bottom: 0;
   }
-  .header-sub {
-    font-size: 0.75rem;
-    color: #4a90b8;
-    letter-spacing: 0.2em;
-    margin-top: 0.1rem;
+  .home-sub {
+    font-size: 0.75rem; color: #4a90b8; letter-spacing: 0.2em; margin-top: 0.2rem;
+    margin-bottom: 1.5rem;
   }
 
-  .metric-card {
+  /* ── ナビカード ── */
+  .nav-card {
     background: linear-gradient(135deg, #0d1b2e 0%, #0f2340 100%);
-    border: 1px solid #1a3a5c;
-    border-radius: 12px;
-    padding: 1.2rem 1.4rem;
-    position: relative;
-    overflow: hidden;
+    border: 1px solid #1a3a5c; border-radius: 12px;
+    padding: 1rem 1.2rem; text-align: center; cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    margin-bottom: 0.5rem;
   }
-  .metric-card::before {
-    content: "";
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, #00e5ff, #7b2ff7);
-  }
-  .metric-label {
-    font-size: 0.65rem;
-    letter-spacing: 0.2em;
-    color: #4a90b8;
-    text-transform: uppercase;
-    margin-bottom: 0.3rem;
-  }
-  .metric-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: #00e5ff;
-    text-shadow: 0 0 8px #00e5ff66;
-    line-height: 1.1;
-  }
-  .metric-unit {
-    font-size: 0.85rem;
-    color: #4a90b8;
-    margin-left: 0.2rem;
-  }
-  .metric-sub {
-    font-size: 0.7rem;
-    color: #2a6080;
-    margin-top: 0.2rem;
-  }
+  .nav-card:hover { border-color: #00e5ff; box-shadow: 0 0 12px #00e5ff33; }
+  .nav-icon { font-size: 1.8rem; margin-bottom: 0.3rem; }
+  .nav-label { font-size: 0.7rem; letter-spacing: 0.15em; color: #4a90b8;
+               text-transform: uppercase; }
 
-  .gpu-name-badge {
-    display: inline-block;
-    background: linear-gradient(90deg, #001a33, #00264d);
-    border: 1px solid #00e5ff44;
-    border-radius: 6px;
-    padding: 0.3rem 0.8rem;
-    font-size: 0.8rem;
-    color: #00e5ff;
-    letter-spacing: 0.1em;
-    margin-bottom: 1rem;
-  }
-
-  .bar-wrap {
-    background: #0a1520;
-    border-radius: 4px;
-    height: 8px;
-    width: 100%;
-    overflow: hidden;
-    margin-top: 0.5rem;
-  }
-  .bar-fill-blue {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #0066cc, #00e5ff);
-    box-shadow: 0 0 8px #00e5ff88;
-    transition: width 0.4s ease;
-  }
-  .bar-fill-purple {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #4a00cc, #7b2ff7);
-    box-shadow: 0 0 8px #7b2ff766;
-    transition: width 0.4s ease;
-  }
-  .bar-fill-green {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #006633, #00cc66);
-    box-shadow: 0 0 8px #00cc6666;
-    transition: width 0.4s ease;
-  }
-  .bar-fill-orange {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #cc4400, #ff7700);
-    box-shadow: 0 0 8px #ff770066;
-    transition: width 0.4s ease;
-  }
-
-  .process-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.75rem;
-  }
-  .process-table th {
-    color: #4a90b8;
-    text-align: left;
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #1a3a5c;
-    letter-spacing: 0.1em;
-    font-size: 0.65rem;
-    text-transform: uppercase;
-  }
-  .process-table td {
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #0d1b2e;
-    color: #b0c8e0;
-  }
-  .process-table tr:hover td { background: #0f2340; }
-
-  .timestamp {
-    font-size: 0.65rem;
-    color: #2a6080;
-    letter-spacing: 0.1em;
-  }
-  .dot-live {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #00e5ff;
-    box-shadow: 0 0 6px #00e5ff;
-    margin-right: 6px;
-    animation: pulse 1.5s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-
+  /* ── セクションヘッダー ── */
   .section-title {
-    font-size: 0.65rem;
-    letter-spacing: 0.25em;
-    color: #4a90b8;
-    text-transform: uppercase;
-    border-bottom: 1px solid #1a3a5c;
-    padding-bottom: 0.3rem;
-    margin-bottom: 0.8rem;
+    font-size: 0.7rem; letter-spacing: 0.25em; text-transform: uppercase;
+    color: #4a90b8; border-bottom: 1px solid #1a3a5c;
+    padding-bottom: 0.4rem; margin: 1.5rem 0 0.8rem 0;
   }
 
-  div[data-testid="stMetric"] { display: none; }
+  /* ── Streamlit ボタン上書き ── */
+  div[data-testid="stButton"] > button {
+    background: linear-gradient(135deg, #0d1b2e, #0f2340);
+    border: 1px solid #1a3a5c; border-radius: 10px;
+    color: #e0e6f0; font-family: 'Share Tech Mono', monospace;
+    font-size: 0.8rem; letter-spacing: 0.1em;
+    padding: 0.7rem 0.5rem; width: 100%;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  div[data-testid="stButton"] > button:hover {
+    border-color: #00e5ff; box-shadow: 0 0 10px #00e5ff33; color: #00e5ff;
+  }
 </style>
 """, unsafe_allow_html=True)
 
 
-def parse_nvidia_smi():
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,temperature.gpu,utilization.gpu,"
-                "utilization.memory,memory.used,memory.total,power.draw,"
-                "power.limit,fan.speed,clocks.current.graphics,clocks.current.memory",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True, text=True, timeout=5,
-        )
-        gpus = []
-        for line in result.stdout.strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 12:
-                continue
-
-            def safe_float(v, default=0.0):
-                try:
-                    return float(re.sub(r"[^\d.]", "", v))
-                except ValueError:
-                    return default
-
-            gpus.append({
-                "index": int(parts[0]),
-                "name": parts[1],
-                "temp": safe_float(parts[2]),
-                "gpu_util": safe_float(parts[3]),
-                "mem_util": safe_float(parts[4]),
-                "mem_used": safe_float(parts[5]),
-                "mem_total": safe_float(parts[6]),
-                "power_draw": safe_float(parts[7]),
-                "power_limit": safe_float(parts[8]),
-                "fan": safe_float(parts[9]),
-                "clk_gpu": safe_float(parts[10]),
-                "clk_mem": safe_float(parts[11]),
-            })
-        return gpus
-    except Exception as e:
+# ── ToDo ファイル読み書き ──────────────────────────────────────────────────────
+def load_todos():
+    if not os.path.exists(TODO_FILE):
         return []
-
-
-def parse_processes():
     try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-compute-apps=gpu_uuid,pid,used_memory,name",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True, text=True, timeout=5,
-        )
-        procs = []
-        for line in result.stdout.strip().splitlines():
-            if not line.strip():
-                continue
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 4:
-                continue
-            procs.append({
-                "gpu": parts[0][:8] + "…",
-                "pid": parts[1],
-                "mem_mb": parts[2],
-                "name": parts[3].split("/")[-1][:40],
-            })
-        return procs
+        with open(TODO_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
         return []
 
-
-def bar_html(pct, color_class):
-    w = min(max(pct, 0), 100)
-    return f"""
-    <div class="bar-wrap">
-      <div class="{color_class}" style="width:{w}%"></div>
-    </div>
-    """
+def save_todos(todos):
+    os.makedirs(os.path.dirname(TODO_FILE), exist_ok=True)
+    with open(TODO_FILE, "w", encoding="utf-8") as f:
+        json.dump(todos, f, ensure_ascii=False, indent=2)
 
 
-def temp_color(t):
-    if t < 50:
-        return "#00cc66"
-    elif t < 75:
-        return "#ffaa00"
-    else:
-        return "#ff3333"
-
-
-# ── Header ──────────────────────────────────────────────────────────────────
+# ── ヘッダー ──────────────────────────────────────────────────────────────────
 st.markdown(
-    '<div class="header-title">⚡ GPU MONITOR</div>'
-    '<div class="header-sub">REAL-TIME SYSTEM DASHBOARD</div>',
+    '<div class="home-title">🔬 3DGS LAB</div>'
+    '<div class="home-sub">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>',
     unsafe_allow_html=True,
 )
 
-# ── Auto-refresh controls ────────────────────────────────────────────────────
-col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 1, 6])
-with col_ctrl1:
-    refresh_rate = st.selectbox("Refresh", [1, 2, 5, 10], index=1, label_visibility="collapsed")
-with col_ctrl2:
-    auto = st.toggle("Auto", value=True)
+# ── ナビゲーション ────────────────────────────────────────────────────────────
+st.markdown('<div class="section-title">Navigation</div>', unsafe_allow_html=True)
 
-placeholder = st.empty()
+pages = [
+    ("⚡", "System\nMonitor",    "0_monitor"),
+    ("🎞️", "Frame\nExtraction",  "1_frame_extraction"),
+    ("📐", "COLMAP\nEstimation", "2_colmap"),
+    ("🧠", "3DGS\nTraining",     "3_training"),
+    ("🖼️", "Results\nViewer",    "4_results"),
+    ("⚙️", "Pipeline\nRunner",   "5_pipeline"),
+    ("📊", "Compare\nResults",   "6_compare"),
+]
 
-while True:
-    gpus = parse_nvidia_smi()
-    procs = parse_processes()
-    now = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-
-    with placeholder.container():
-
-        if not gpus:
-            st.error("nvidia-smi からデータを取得できませんでした。")
-        else:
-            for gpu in gpus:
-                mem_pct = (gpu["mem_used"] / gpu["mem_total"] * 100) if gpu["mem_total"] else 0
-                pwr_pct = (gpu["power_draw"] / gpu["power_limit"] * 100) if gpu["power_limit"] else 0
-
-                st.markdown(
-                    f'<div class="gpu-name-badge">GPU {gpu["index"]} — {gpu["name"]}</div>',
-                    unsafe_allow_html=True,
-                )
-
-                # ── Row 1: 4 main metrics ──
-                c1, c2, c3, c4 = st.columns(4)
-
-                with c1:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">GPU Utilization</div>
-                      <div class="metric-value">{gpu['gpu_util']:.0f}<span class="metric-unit">%</span></div>
-                      {bar_html(gpu['gpu_util'], 'bar-fill-blue')}
-                    </div>""", unsafe_allow_html=True)
-
-                with c2:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">VRAM Usage</div>
-                      <div class="metric-value">{gpu['mem_used']:.0f}<span class="metric-unit">MiB</span></div>
-                      <div class="metric-sub">/ {gpu['mem_total']:.0f} MiB &nbsp;({mem_pct:.1f}%)</div>
-                      {bar_html(mem_pct, 'bar-fill-purple')}
-                    </div>""", unsafe_allow_html=True)
-
-                with c3:
-                    tc = temp_color(gpu['temp'])
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Temperature</div>
-                      <div class="metric-value" style="color:{tc};text-shadow:0 0 8px {tc}88;">{gpu['temp']:.0f}<span class="metric-unit">°C</span></div>
-                      <div class="metric-sub">Fan &nbsp;{gpu['fan']:.0f}%</div>
-                      {bar_html(gpu['temp'] / 100 * 100, 'bar-fill-green' if gpu['temp'] < 75 else 'bar-fill-orange')}
-                    </div>""", unsafe_allow_html=True)
-
-                with c4:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Power Draw</div>
-                      <div class="metric-value">{gpu['power_draw']:.0f}<span class="metric-unit">W</span></div>
-                      <div class="metric-sub">/ {gpu['power_limit']:.0f} W &nbsp;({pwr_pct:.1f}%)</div>
-                      {bar_html(pwr_pct, 'bar-fill-orange')}
-                    </div>""", unsafe_allow_html=True)
-
-                st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
-
-                # ── Row 2: clocks ──
-                c5, c6, c7, c8 = st.columns(4)
-
-                with c5:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Graphics Clock</div>
-                      <div class="metric-value" style="font-size:1.4rem">{gpu['clk_gpu']:.0f}<span class="metric-unit">MHz</span></div>
-                    </div>""", unsafe_allow_html=True)
-
-                with c6:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Memory Clock</div>
-                      <div class="metric-value" style="font-size:1.4rem">{gpu['clk_mem']:.0f}<span class="metric-unit">MHz</span></div>
-                    </div>""", unsafe_allow_html=True)
-
-                with c7:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Mem Bandwidth Util</div>
-                      <div class="metric-value" style="font-size:1.4rem">{gpu['mem_util']:.0f}<span class="metric-unit">%</span></div>
-                    </div>""", unsafe_allow_html=True)
-
-                with c8:
-                    proc_count = len(procs)
-                    st.markdown(f"""
-                    <div class="metric-card">
-                      <div class="metric-label">Active Processes</div>
-                      <div class="metric-value" style="font-size:1.4rem">{proc_count}</div>
-                    </div>""", unsafe_allow_html=True)
-
-                st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-
-        # ── Process table ──
-        st.markdown('<div class="section-title">Compute Processes</div>', unsafe_allow_html=True)
-
-        if procs:
-            rows = "".join(
-                f"<tr><td>{p['pid']}</td><td>{p['name']}</td><td>{p['mem_mb']} MiB</td></tr>"
-                for p in procs
-            )
-            st.markdown(f"""
-            <table class="process-table">
-              <thead><tr><th>PID</th><th>Process</th><th>VRAM</th></tr></thead>
-              <tbody>{rows}</tbody>
-            </table>""", unsafe_allow_html=True)
-        else:
-            st.markdown('<span style="color:#2a6080;font-size:0.75rem;">No active compute processes</span>', unsafe_allow_html=True)
-
-        # ── Timestamp ──
-        st.markdown(
-            f"<div style='margin-top:1.2rem'>"
-            f"<span class='dot-live'></span>"
-            f"<span class='timestamp'>LAST UPDATE: {now}</span>"
-            f"</div>",
-            unsafe_allow_html=True,
+nav_cols = st.columns(len(pages))
+for col, (icon, label, page_name) in zip(nav_cols, pages):
+    with col:
+        st.page_link(
+            f"pages/{page_name}.py",
+            label=f"{icon}\n{label}",
+            use_container_width=True,
         )
 
-    if not auto:
-        break
+st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-    time.sleep(refresh_rate)
+# ── ToDo ─────────────────────────────────────────────────────────────────────
+st.markdown('<div class="section-title">ToDo リスト</div>', unsafe_allow_html=True)
+
+todos = load_todos()
+
+# セッション初期化
+if "todo_edit_mode" not in st.session_state:
+    st.session_state.todo_edit_mode = False
+
+# 追加フォーム
+with st.form("add_todo", clear_on_submit=True):
+    add_col, btn_col = st.columns([5, 1])
+    with add_col:
+        new_task = st.text_input("新しいタスク", placeholder="タスクを入力...",
+                                 label_visibility="collapsed")
+    with btn_col:
+        submitted = st.form_submit_button("追加", use_container_width=True)
+
+    if submitted and new_task.strip():
+        todos.append({
+            "id": datetime.now().isoformat(),
+            "text": new_task.strip(),
+            "done": False,
+        })
+        save_todos(todos)
+        st.rerun()
+
+# ToDo 一覧表示（完了トグル + 削除ボタン）
+if not todos:
+    st.markdown(
+        '<span style="color:#2a6080;font-size:0.8rem;">タスクはまだありません。上のフォームから追加できます。</span>',
+        unsafe_allow_html=True,
+    )
+else:
+    for i, todo in enumerate(todos):
+        t_col, d_col = st.columns([8, 1])
+        with t_col:
+            checked = st.checkbox(
+                todo["text"],
+                value=todo["done"],
+                key=f"todo_{todo['id']}",
+            )
+            if checked != todo["done"]:
+                todos[i]["done"] = checked
+                save_todos(todos)
+                st.rerun()
+        with d_col:
+            if st.button("🗑️", key=f"del_{todo['id']}", help="削除"):
+                todos.pop(i)
+                save_todos(todos)
+                st.rerun()
+
+    # 完了済みをまとめて削除
+    done_count = sum(1 for t in todos if t["done"])
+    if done_count > 0:
+        if st.button(f"完了済み {done_count} 件を削除", use_container_width=False):
+            todos = [t for t in todos if not t["done"]]
+            save_todos(todos)
+            st.rerun()
+
+# ── 使用方法（トグル） ────────────────────────────────────────────────────────
+st.markdown('<div class="section-title">使用方法</div>', unsafe_allow_html=True)
+
+with st.expander("使用方法を表示する", expanded=False):
+    st.markdown("""
+### パイプライン全体の流れ
+
+```
+[Step 1] 動画 / 画像を data/<scene_name>/ に配置
+    ↓
+[Step 2] Frame Extraction（FFmpeg でフレーム切り出し）
+    ↓
+[Step 3] COLMAP Estimation（カメラ姿勢推定）
+    ↓
+[Step 4] 3DGS Training（Gaussian Splatting 学習）
+    ↓
+[Step 5] Results Viewer（評価・可視化）
+```
+
+---
+
+### 各ページの説明
+
+| ページ | 内容 |
+|---|---|
+| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視 |
+| 🎞️ Frame Extraction | 動画から連番画像を切り出す |
+| 📐 COLMAP Estimation | COLMAP でカメラ姿勢を推定する |
+| 🧠 3DGS Training | Gaussian Splatting の学習を実行する |
+| 🖼️ Results Viewer | 学習結果・レンダリング結果を確認する |
+| ⚙️ Pipeline Runner | ステップをまとめて自動実行する |
+| 📊 Compare Results | 複数の実験結果を比較する |
+
+---
+
+### 実験フォルダの構造
+
+実験結果は `experiments/YYYYMMDD_HHMMSS_<scene_name>/` に保存されます。
+
+```
+experiments/
+└── 20240420_120000_scene1/
+    ├── config.yaml      # 実験設定
+    ├── frames/          # 切り出し画像
+    ├── colmap/          # COLMAP 出力
+    ├── output/          # 3DGS 学習結果
+    ├── renders/         # レンダリング結果
+    └── logs/            # 学習ログ
+```
+
+---
+
+### よくある操作
+
+**動画からフレームを切り出す（CLI）**
+```bash
+python scripts/extract_frames.py \\
+  --input data/scene1/video.mp4 \\
+  --output experiments/YYYYMMDD_HHMMSS_scene1/frames/
+```
+
+**COLMAP を実行する（CLI）**
+```bash
+python scripts/run_colmap.py \\
+  --image_path experiments/YYYYMMDD_HHMMSS_scene1/frames/
+```
+
+**3DGS 学習を実行する（CLI）**
+```bash
+python scripts/run_train.py \\
+  --source experiments/YYYYMMDD_HHMMSS_scene1/
+```
+
+---
+
+### 注意事項
+
+- `data/` フォルダ内のファイルは **絶対に削除しない**でください。
+- GPU を使う長時間処理は実行前に必ず確認しましょう。
+- 360度動画の場合はピンホール変換を先に行います。
+""")
