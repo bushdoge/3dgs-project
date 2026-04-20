@@ -15,13 +15,15 @@
 | 項目 | 内容 |
 |---|---|
 | 接続構成 | 自宅PC → SSH → 踏み台サーバ → 研究室GPUマシン |
-| コンテナ | Docker（Linux上で稼働） |
-| GPU | NVIDIA RTX A6000（VRAM 48GB） |
-| Python | 3.10（システムPython） |
-| PyTorch | 2.5.1 + CUDA 12.1 |
-| 3DGSフレームワーク | [graphdeco-inria/gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) |
-| 前処理 | FFmpeg 4.4.2、COLMAP 3.9（CUDA対応ビルド）、HLoc 1.5 |
-| UI | Streamlit、noVNC |
+| ベースイメージ | `nvidia/cuda:12.2.0-devel-ubuntu22.04` |
+| コンテナ | Docker（Ubuntu 22.04 + CUDA 12.2） |
+| GPU | NVIDIA RTX A6000（VRAM 48GB、CUDA Arch 8.6） |
+| Python | 3.10（Ubuntu 22.04 システムPython） |
+| PyTorch | cu121 wheels（`--index-url https://download.pytorch.org/whl/cu121`） |
+| 3DGSフレームワーク | [graphdeco-inria/gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting)（`/opt/gaussian-splatting/`） |
+| 前処理 | FFmpeg（apt）、COLMAP 3.9（CUDA対応ソースビルド）、HLoc（最新 main） |
+| UI | Streamlit（ポート 8501）、noVNC（ポート 6080） |
+| 開発ツール | Node.js 20、Claude Code CLI（`@anthropic-ai/claude-code`） |
 
 ---
 
@@ -30,7 +32,7 @@
 ```
 /workspace/
 ├── CLAUDE.md               # このファイル
-├── streamlit_app.py        # GPUモニター（Streamlit）
+├── streamlit_app.py        # ホーム画面（ToDo・使用方法・ナビゲーション）
 ├── data/                   # 元動画・元画像置き場（削除・git add 厳禁）
 │   └── <scene_name>/       # シーンごとに分ける
 │       ├── video.mp4       # 元動画
