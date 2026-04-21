@@ -2,6 +2,9 @@
 # ガウシアンを生産して研究施設を拡大するアイドルゲーム
 # セーブデータは /workspace/tmp/minigame_save.json に保存される
 
+import sys
+sys.path.insert(0, "/workspace")
+
 import json
 import math
 import random
@@ -9,6 +12,8 @@ import time
 from pathlib import Path
 
 import streamlit as st
+
+from pipeline_widget import render_pipeline_status
 
 st.set_page_config(page_title="3DGS Laboratory", page_icon="⚗️", layout="wide")
 
@@ -663,6 +668,10 @@ with right:
                 f'<div style="color:#a855f7;font-size:0.72rem;margin-bottom:2px;">✦ {label}</div>',
                 unsafe_allow_html=True,
             )
+
+# ── パイプライン進捗 ──────────────────────────────────────────────────────────
+with st.expander("🚀 パイプライン進捗", expanded=False):
+    render_pipeline_status(compact=True)
 
 # ── フッター：自動リロード ────────────────────────────────────────────────────
 st.divider()

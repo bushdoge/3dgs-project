@@ -1,5 +1,8 @@
 # GPU / CPU / メモリのリアルタイムモニタリングページ
 
+import sys
+sys.path.insert(0, "/workspace")
+
 import streamlit as st
 import subprocess
 import time
@@ -10,6 +13,8 @@ from datetime import datetime
 
 import altair as alt
 import pandas as pd
+
+from pipeline_widget import render_pipeline_status
 
 st.set_page_config(
     page_title="System Monitor",
@@ -322,6 +327,19 @@ while True:
     sh["swp"].append(mem["su"])
 
     with placeholder.container():
+
+        # ══════════════════════════════════════
+        #  パイプライン進捗
+        # ══════════════════════════════════════
+        st.markdown(
+            '<div style="font-size:0.65rem;letter-spacing:0.25em;text-transform:uppercase;'
+            'color:#4a90b8;border-bottom:1px solid #1a3a5c;padding-bottom:0.3rem;'
+            'margin-bottom:0.6rem;">Pipeline Status</div>',
+            unsafe_allow_html=True,
+        )
+        render_pipeline_status(compact=False)
+
+        st.divider()
 
         # ══════════════════════════════════════
         #  GPU セクション（シアン） — トグル
