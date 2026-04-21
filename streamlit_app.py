@@ -162,6 +162,14 @@ st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 st.markdown('<div class="section-title">実行中のタスク</div>', unsafe_allow_html=True)
 
 _pl = st.session_state.get("pipeline", {})
+# session_state が空（Streamlit再起動直後など）のときはファイルから読む
+if not _pl.get("active"):
+    try:
+        _state_file = Path("/workspace/tmp/pipeline_state.json")
+        if _state_file.exists():
+            _pl = json.loads(_state_file.read_text(encoding="utf-8"))
+    except Exception:
+        pass
 _pipeline_active = (
     _pl.get("active")
     and _pl.get("step") not in ("done", "failed", "setup", None)

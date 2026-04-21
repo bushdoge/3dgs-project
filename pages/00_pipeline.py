@@ -1,6 +1,7 @@
 # フレーム抽出→COLMAP→3DGS学習を一括で自動実行するパイプラインページ
 # 各ステップの完了を自動検知して次のステップに進む
 
+import json
 import os
 import re
 import signal
@@ -13,6 +14,35 @@ from pathlib import Path
 import streamlit as st
 
 st.set_page_config(page_title="パイプライン実行", page_icon="🚀", layout="wide")
+
+PIPELINE_STATE_FILE = "/workspace/tmp/pipeline_state.json"
+
+# ── パイプライン状態の永続化 ─────────────────────────────────────────────────
+
+def save_pipeline_state(state: dict):
+    """Popenオブジェクトを除いたパイプライン状態をJSONに保存する"""
+    serializable = {k: v for k, v in state.items() if k != "proc"}
+    Path(PIPELINE_STATE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(PIPELINE_STATE_FILE).write_text(
+        json.dumps(serializable, ensure_ascii=False), encoding="utf-8"
+    )
+
+def load_pipeline_state() -> dict:
+    """保存されたパイプライン状態を読み込む。なければNoneを返す"""
+    try:
+        if Path(PIPELINE_STATE_FILE).exists():
+            data = json.loads(Path(PIPELINE_STATE_FILE).read_text(encoding="utf-8"))
+            data["proc"] = None  # 再起動後はPopenなし、pidで代替
+            return data
+    except Exception:
+        pass
+    return None
+
+def clear_pipeline_state():
+    """パイプライン状態ファイルを削除する"""
+    p = Path(PIPELINE_STATE_FILE)
+    if p.exists():
+        p.unlink()
 
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
 DEFAULT_PIPELINE = {
@@ -39,6 +69,7 @@ DEFAULT_PIPELINE = {
     "save_iterations": [7000, 30000],
     "test_iterations": [7000, 30000],
     "proc": None,
+    "pid": None,       # サブプロセスのPID（再起動後の復元用）
     "log_path": None,
     "error_msg": None,
     "start_time": None,
@@ -46,7 +77,12 @@ DEFAULT_PIPELINE = {
 }
 
 if "pipeline" not in st.session_state:
-    st.session_state.pipeline = DEFAULT_PIPELINE.copy()
+    saved = load_pipeline_state()
+    if saved and saved.get("active"):
+        st.session_state.pipeline = saved
+        st.session_state._pipeline_restored = True
+    else:
+        st.session_state.pipeline = DEFAULT_PIPELINE.copy()
 
 pl = st.session_state.pipeline
 
@@ -76,13 +112,38 @@ def get_log_tail(log_path, n=30):
 # ════════════════════════════════════════════════════════════════════════════
 #  ステップ進行ロジック
 # ════════════════════════════════════════════════════════════════════════════
+
+def _pid_returncode(pid) -> int | None:
+    """PIDのみでプロセスの終了を確認する（Streamlit再起動後の復元用）。
+    実行中: None、終了（成功）: 0、終了（エラー）: 1 を返す。"""
+    if not pid:
+        return None
+    try:
+        os.kill(pid, 0)
+        return None  # プロセスはまだ生きている
+    except (ProcessLookupError, OSError):
+        pass
+    # プロセスが消えた → ログ末尾でエラー判定
+    log_path = pl.get("log_path", "")
+    if log_path and Path(log_path).exists():
+        tail = Path(log_path).read_text(errors="replace").split("\n")[-15:]
+        for line in tail:
+            if "ERROR:" in line or ("error" in line.lower() and "failed" in line.lower()):
+                return 1
+    return 0
+
+
 def advance_pipeline():
     """現在のステップを確認し、完了していれば次のステップを開始する"""
     proc = pl["proc"]
-    if proc is None:
-        return
+    pid  = pl.get("pid")
 
-    retcode = proc.poll()
+    # プロセスの終了コードを取得（Popenあり / PIDのみ の両方に対応）
+    if proc is not None:
+        retcode = proc.poll()
+    else:
+        retcode = _pid_returncode(pid)
+
     if retcode is None:
         return  # まだ実行中
 
@@ -93,10 +154,12 @@ def advance_pipeline():
         pl["error_msg"] = f"ステップ「{step}」がエラーで終了しました（終了コード: {retcode}）"
         pl["step"] = "failed"
         pl["proc"] = None
+        save_pipeline_state(pl)
         return
 
     pl["step_status"][step] = "done"
-    pl["step_times"][step] = time.time()
+    pl["step_times"][step]  = time.time()
+    pl["proc"] = None
 
     if step == "extracting":
         start_colmap()
@@ -104,7 +167,8 @@ def advance_pipeline():
         start_training()
     elif step == "training":
         pl["step"] = "done"
-        pl["proc"] = None
+        pl["pid"]  = None
+        save_pipeline_state(pl)
 
 
 def start_colmap():
@@ -132,6 +196,8 @@ def start_colmap():
 
     log_file = open(log_path, "w")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+    pl["pid"]  = pl["proc"].pid
+    save_pipeline_state(pl)
 
 
 def start_training():
@@ -153,6 +219,8 @@ def start_training():
     ]
     log_file = open(log_path, "w")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+    pl["pid"]  = pl["proc"].pid
+    save_pipeline_state(pl)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -178,6 +246,10 @@ st.divider()
 # ════════════════════════════════════════════════════════════════════════════
 #  実行中・完了ビュー
 # ════════════════════════════════════════════════════════════════════════════
+if st.session_state.get("_pipeline_restored"):
+    st.info("🔄 Streamlit 再起動前のパイプライン実行状態を復元しました。そのまま監視を継続します。")
+    del st.session_state["_pipeline_restored"]
+
 if pl["active"]:
     advance_pipeline()
 
@@ -192,6 +264,7 @@ if pl["active"]:
         st.metric("総実行時間", f"{elapsed/60:.1f} 分")
 
         if st.button("🔄 新しいパイプラインを開始"):
+            clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
         st.stop()
@@ -202,6 +275,7 @@ if pl["active"]:
             with st.expander("ログを確認"):
                 st.text(get_log_tail(pl["log_path"], 50))
         if st.button("🔄 リセットして最初から"):
+            clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
         st.stop()
@@ -268,11 +342,18 @@ if pl["active"]:
         # 中断ボタン
         if st.button("⏹ パイプラインを中断"):
             proc = pl["proc"]
+            pid  = pl.get("pid")
+            kill_pid = None
             if proc and proc.poll() is None:
+                kill_pid = proc.pid
+            elif pid:
+                kill_pid = pid
+            if kill_pid:
                 try:
-                    os.kill(proc.pid, signal.SIGTERM)
+                    os.kill(kill_pid, signal.SIGTERM)
                 except Exception:
                     pass
+            clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
 
@@ -493,7 +574,9 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "save_iterations": save_iters or [7000, 30000],
             "test_iterations": test_iters or [7000, 30000],
             "proc": proc,
+            "pid": proc.pid,
             "log_path": log_path,
             "start_time": time.time(),
         }
+        save_pipeline_state(st.session_state.pipeline)
         st.rerun()
