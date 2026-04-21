@@ -2,6 +2,7 @@
 # 各ステップの完了を自動検知して次のステップに進む
 
 import os
+import re
 import signal
 import sys
 import time
@@ -208,6 +209,56 @@ if pl["active"]:
     else:
         step_name_ja = {"extracting": "フレーム抽出", "colmap": "COLMAP", "training": "3DGS学習"}.get(current_step, current_step)
         st.info(f"**{step_name_ja}** を実行中...")
+
+        # ── ステップ別進捗バー ──────────────────────────────────────────────
+        if pl["log_path"] and Path(pl["log_path"]).exists():
+            _content = Path(pl["log_path"]).read_text(errors="replace")
+            _pct, _bar_label = None, ""
+            _colmap_step_names = {1: "特徴点抽出", 2: "マッチング", 3: "3D再構成", 4: "undistortion"}
+
+            if current_step == "extracting":
+                if pl.get("is_360"):
+                    _m = re.findall(r'\[(\d+)/(\d+)\]', _content)
+                    if _m:
+                        _cur, _tot = int(_m[-1][0]), int(_m[-1][1])
+                        _pct = min(_cur / _tot, 1.0)
+                        _bar_label = f"フレーム変換: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
+                else:
+                    _tm = re.search(r'PROGRESS_TOTAL (\d+)', _content)
+                    _pm = re.findall(r'PROGRESS (\d+)/(\d+)', _content)
+                    if _tm and _pm:
+                        _tot = int(_tm.group(1))
+                        _cur = int(_pm[-1][0])
+                        if _tot > 0:
+                            _pct = min(_cur / _tot, 1.0)
+                            _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
+
+            elif current_step == "colmap":
+                if pl.get("use_hloc"):
+                    _m = re.findall(r'\[(\d+)/4\]', _content)
+                else:
+                    _m = re.findall(r'\[COLMAP (\d+)/4\]', _content)
+                if _m:
+                    _cur = int(_m[-1])
+                    _pct = min(_cur / 4, 1.0)
+                    _bar_label = (f"ステップ {_cur}/4: {_colmap_step_names.get(_cur, '')} "
+                                  f"({_pct*100:.0f}%)")
+
+            elif current_step == "training":
+                _total = pl.get("iterations", 30000)
+                _tm = re.findall(rf'(\d+)/{_total}', _content)
+                if not _tm:
+                    _tm = re.findall(r'\[ITER\s+(\d+)\]', _content)
+                if _tm:
+                    _cur = int(_tm[-1])
+                    _pct = min(_cur / _total, 1.0)
+                    _bar_label = f"学習進捗: {_cur:,} / {_total:,} iter ({_pct*100:.0f}%)"
+
+            if _pct is not None:
+                st.caption(_bar_label)
+                st.progress(_pct)
+            else:
+                st.caption("進捗を取得中...")
 
         # ログ表示
         if pl["log_path"]:

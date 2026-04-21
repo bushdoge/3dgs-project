@@ -136,8 +136,7 @@ def main():
     for i, img_path in enumerate(images, 1):
         n = process_image(img_path, out_dir, args.fov, args.width, args.height, angles)
         total += n
-        if i % 10 == 0 or i == len(images):
-            print(f"  [{i}/{len(images)}] 変換中...", flush=True)
+        print(f"  [{i}/{len(images)}] 変換中...", flush=True)
 
     print(f"変換完了: {total} 枚 → {out_dir}", flush=True)
 

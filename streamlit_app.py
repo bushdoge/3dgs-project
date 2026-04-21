@@ -222,28 +222,61 @@ else:
             else:
                 st.markdown(f'<div class="step-waiting">⏳ {slabel}</div>', unsafe_allow_html=True)
 
-    # ── 学習進捗バー（trainingステップのみ） ──
-    if _step == "training":
-        _log_path = _pl.get("log_path")
-        if _log_path and Path(_log_path).exists():
-            _content = Path(_log_path).read_text(errors="replace")
-            _total   = _pl.get("iterations", 30000)
-            # tqdm形式 "ITER/TOTAL" またはセーブポイント "[ITER N]" を解析
-            _matches = re.findall(rf'(\d+)/{_total}', _content)
-            if not _matches:
-                _matches = re.findall(r'\[ITER\s+(\d+)\]', _content)
-            if _matches:
-                _cur = int(_matches[-1])
-                _pct = min(_cur / _total, 1.0)
-                st.markdown(
-                    f'<span style="color:#4a90b8;font-size:0.82rem;">'
-                    f'学習進捗: <b style="color:#e0e6f0">{_cur:,}</b> / {_total:,} iter'
-                    f'&nbsp;({_pct*100:.0f}%)</span>',
-                    unsafe_allow_html=True,
-                )
-                st.progress(_pct)
+    # ── ステップ別進捗バー ─────────────────────────────────────────────────────
+    _log_path = _pl.get("log_path")
+    if _log_path and Path(_log_path).exists():
+        _content = Path(_log_path).read_text(errors="replace")
+        _pct, _bar_label = None, ""
+
+        if _step == "extracting":
+            if _pl.get("is_360"):
+                # convert_360.py: "[i/N] 変換中..."
+                _m = re.findall(r'\[(\d+)/(\d+)\]', _content)
+                if _m:
+                    _cur, _tot = int(_m[-1][0]), int(_m[-1][1])
+                    _pct = min(_cur / _tot, 1.0)
+                    _bar_label = f"フレーム変換: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
             else:
-                st.caption("学習ログを待機中...")
+                # extract_frames.py: "PROGRESS_TOTAL N" + "PROGRESS cur/total"
+                _tm = re.search(r'PROGRESS_TOTAL (\d+)', _content)
+                _pm = re.findall(r'PROGRESS (\d+)/(\d+)', _content)
+                if _tm and _pm:
+                    _tot = int(_tm.group(1))
+                    _cur = int(_pm[-1][0])
+                    _pct = min(_cur / _tot, 1.0) if _tot > 0 else None
+                    if _pct is not None:
+                        _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
+
+        elif _step == "colmap":
+            _colmap_step_names = {1: "特徴点抽出", 2: "マッチング", 3: "3D再構成", 4: "undistortion"}
+            if _pl.get("use_hloc"):
+                _m = re.findall(r'\[(\d+)/4\]', _content)
+            else:
+                _m = re.findall(r'\[COLMAP (\d+)/4\]', _content)
+            if _m:
+                _cur = int(_m[-1])
+                _pct = min(_cur / 4, 1.0)
+                _bar_label = (f"ステップ {_cur}/4: {_colmap_step_names.get(_cur, '')} "
+                              f"({_pct*100:.0f}%)")
+
+        elif _step == "training":
+            _total = _pl.get("iterations", 30000)
+            _tm = re.findall(rf'(\d+)/{_total}', _content)
+            if not _tm:
+                _tm = re.findall(r'\[ITER\s+(\d+)\]', _content)
+            if _tm:
+                _cur = int(_tm[-1])
+                _pct = min(_cur / _total, 1.0)
+                _bar_label = (f"学習進捗: {_cur:,} / {_total:,} iter ({_pct*100:.0f}%)")
+
+        if _pct is not None:
+            st.markdown(
+                f'<span style="color:#4a90b8;font-size:0.82rem;">{_bar_label}</span>',
+                unsafe_allow_html=True,
+            )
+            st.progress(_pct)
+        else:
+            st.caption("進捗を取得中...")
 
     # ── 最新ログ ──
     _log_path = _pl.get("log_path")
