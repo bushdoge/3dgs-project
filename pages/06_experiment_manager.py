@@ -89,6 +89,10 @@ st.subheader("🔧 実験の詳細操作")
 
 exp_names = [e.name for e in exps]
 selected_name = st.selectbox("操作する実験を選択", exp_names)
+
+if not selected_name:
+    st.stop()
+
 selected_exp = EXPERIMENTS_DIR / selected_name
 
 tab_note, tab_delete = st.tabs(["📝 メモ編集", "🗑️ フォルダ削除"])

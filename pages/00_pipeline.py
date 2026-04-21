@@ -20,6 +20,11 @@ DEFAULT_PIPELINE = {
     "experiment_dir": None,
     "video_path": None,
     "fps": 2.0,
+    "is_360": False,
+    "fov": 90,
+    "out_w": 1024,
+    "out_h": 1024,
+    "directions": ["front", "right", "back", "left"],
     "camera_model": "OPENCV",
     "iterations": 30000,
     "save_iterations": [7000, 30000],
@@ -219,17 +224,40 @@ for subdir in ("360movies", "movies"):
         video_files += [str(p.relative_to("/workspace")) for p in (data_dir / subdir).rglob(ext)]
 video_files = sorted(video_files)
 
-col1, col2 = st.columns(2)
-with col1:
-    if video_files:
-        sel_video = st.selectbox("動画ファイル（data/360movies/ または data/movies/）", video_files)
-        video_path = f"/workspace/{sel_video}"
-    else:
-        st.warning("data/360movies/ または data/movies/ に動画が見つかりません。")
-        video_path = st.text_input("動画ファイルのパスを入力",
-                                   placeholder="/workspace/data/movies/scene1.mp4")
+if video_files:
+    sel_video = st.selectbox("動画ファイル（data/360movies/ または data/movies/）", video_files)
+    video_path = f"/workspace/{sel_video}"
+else:
+    st.warning("data/360movies/ または data/movies/ に動画が見つかりません。")
+    video_path = st.text_input("動画ファイルのパスを入力",
+                               placeholder="/workspace/data/movies/scene1.mp4")
 
-with col2:
+is_360 = st.checkbox(
+    "360度動画（ピンホール変換する）",
+    help="等距円筒形式の360度動画の場合にチェックしてください。",
+)
+
+sel_dirs = ["front", "right", "back", "left"]
+fov_val, out_w_val, out_h_val = 90, 1024, 1024
+
+if is_360:
+    st.info("各フレームをピンホールカメラ視点に変換してからCOLMAPに渡します。")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        fov_val = st.slider("水平視野角（FOV）", 60, 120, 90, 5)
+    with col_b:
+        out_size = st.selectbox("出力解像度", ["512×512", "1024×1024", "2048×2048"], index=1)
+        out_w_val = out_h_val = int(out_size.split("×")[0])
+    with col_c:
+        fps = st.number_input("抽出FPS", min_value=0.1, max_value=10.0, value=1.0, step=0.5)
+    direction_labels = {"front": "前", "right": "右", "back": "後", "left": "左",
+                        "up": "上", "down": "下"}
+    sel_dirs = st.multiselect(
+        "変換する方向", list(direction_labels.keys()),
+        default=["front", "right", "back", "left"],
+        format_func=lambda x: f"{direction_labels[x]}（{x}）",
+    )
+else:
     fps = st.number_input("抽出FPS", min_value=0.1, max_value=30.0, value=2.0, step=0.5)
 
 st.subheader("🏷️ 実験名の設定")
@@ -270,12 +298,25 @@ if st.button("🚀 パイプラインを開始", type="primary",
         log_path = str(Path(experiment_dir) / "extract_log.txt")
         os.makedirs(input_dir, exist_ok=True)
 
-        cmd = [
-            "python", "/workspace/scripts/extract_frames.py",
-            "--input", video_path,
-            "--output", input_dir,
-            "--fps", str(fps),
-        ]
+        if is_360:
+            cmd = [
+                "python", "/workspace/scripts/convert_360.py",
+                "--input", video_path,
+                "--output", input_dir,
+                "--fov", str(fov_val),
+                "--width", str(out_w_val),
+                "--height", str(out_h_val),
+                "--fps", str(fps),
+                "--directions", *sel_dirs,
+            ]
+        else:
+            cmd = [
+                "python", "/workspace/scripts/extract_frames.py",
+                "--input", video_path,
+                "--output", input_dir,
+                "--fps", str(fps),
+            ]
+
         log_file = open(log_path, "w")
         proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
 
@@ -287,6 +328,11 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "experiment_dir": experiment_dir,
             "video_path": video_path,
             "fps": fps,
+            "is_360": is_360,
+            "fov": fov_val,
+            "out_w": out_w_val,
+            "out_h": out_h_val,
+            "directions": sel_dirs,
             "camera_model": camera_model,
             "iterations": iterations,
             "save_iterations": save_iters or [7000, 30000],

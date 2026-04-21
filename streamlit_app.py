@@ -98,13 +98,14 @@ st.markdown(
 st.markdown('<div class="section-title">Navigation</div>', unsafe_allow_html=True)
 
 pages = [
-    ("⚡", "System\nMonitor",    "0_monitor"),
-    ("🎞️", "Frame\nExtraction",  "1_frame_extraction"),
-    ("📐", "COLMAP\nEstimation", "2_colmap"),
-    ("🧠", "3DGS\nTraining",     "3_training"),
-    ("🖼️", "Results\nViewer",    "4_results"),
-    ("⚙️", "Pipeline\nRunner",   "5_pipeline"),
-    ("📊", "Compare\nResults",   "6_compare"),
+    ("🚀", "Pipeline\nRunner",   "00_pipeline"),
+    ("🎞️", "Frame\nExtraction",  "01_frame_extraction"),
+    ("📐", "COLMAP\nEstimation", "02_colmap"),
+    ("🧠", "3DGS\nTraining",     "03_training"),
+    ("🖼️", "Results\nViewer",    "04_results"),
+    ("📊", "Compare\nResults",   "05_compare"),
+    ("🗂️", "Experiment\nManager","06_experiment_manager"),
+    ("⚡", "System\nMonitor",    "monitor"),
 ]
 
 nav_cols = st.columns(len(pages))
@@ -186,9 +187,9 @@ with st.expander("使用方法を表示する", expanded=False):
 ### パイプライン全体の流れ
 
 ```
-[Step 1] 動画 / 画像を data/<scene_name>/ に配置
+[Step 1] 動画を data/movies/ または data/360movies/ に配置
     ↓
-[Step 2] Frame Extraction（FFmpeg でフレーム切り出し）
+[Step 2] Frame Extraction（フレーム切り出し、360度はピンホール変換も）
     ↓
 [Step 3] COLMAP Estimation（カメラ姿勢推定）
     ↓
@@ -197,19 +198,22 @@ with st.expander("使用方法を表示する", expanded=False):
 [Step 5] Results Viewer（評価・可視化）
 ```
 
+> 全ステップ自動実行は **Pipeline Runner** から。
+
 ---
 
 ### 各ページの説明
 
 | ページ | 内容 |
 |---|---|
-| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視 |
-| 🎞️ Frame Extraction | 動画から連番画像を切り出す |
+| 🚀 Pipeline Runner | ステップをまとめて自動実行する（ここから始めるのが最速） |
+| 🎞️ Frame Extraction | 動画から連番画像を切り出す（360度変換オプションあり） |
 | 📐 COLMAP Estimation | COLMAP でカメラ姿勢を推定する |
 | 🧠 3DGS Training | Gaussian Splatting の学習を実行する |
-| 🖼️ Results Viewer | 学習結果・レンダリング結果を確認する |
-| ⚙️ Pipeline Runner | ステップをまとめて自動実行する |
+| 🖼️ Results Viewer | 学習結果・レンダリング結果・メモを確認する |
 | 📊 Compare Results | 複数の実験結果を比較する |
+| 🗂️ Experiment Manager | 実験一覧・ディスク使用量・フォルダ削除 |
+| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視 |
 
 ---
 
