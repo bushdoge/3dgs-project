@@ -62,6 +62,9 @@ DEFAULT_PIPELINE = {
     "use_hloc": False,
     "feature_type": "superpoint_max",
     "matcher_type": "superpoint+lightglue",
+    "pair_method": "exhaustive",
+    "retrieval_model": "netvlad",
+    "num_matched": 20,
     "camera_model": "OPENCV",
     "use_gpu": True,
     # 学習
@@ -181,9 +184,12 @@ def start_colmap():
     if pl["use_hloc"]:
         cmd = [
             sys.executable, "/workspace/scripts/run_hloc.py",
-            "--source_path", exp_dir,
-            "--feature_type", pl["feature_type"],
-            "--matcher_type", pl["matcher_type"],
+            "--source_path",    exp_dir,
+            "--feature_type",   pl["feature_type"],
+            "--matcher_type",   pl["matcher_type"],
+            "--pair_method",    pl.get("pair_method", "exhaustive"),
+            "--retrieval_model", pl.get("retrieval_model", "netvlad"),
+            "--num_matched",    str(pl.get("num_matched", 20)),
         ]
     else:
         cmd = [
@@ -308,14 +314,20 @@ if pl["active"]:
                             _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
 
             elif current_step == "colmap":
+                _colmap_sub = {
+                    4: {1: "特徴点抽出",    2: "マッチング",          3: "3D再構成",    4: "undistortion"},
+                    5: {1: "局所特徴点抽出", 2: "グローバル特徴量抽出", 3: "ペアリスト生成", 4: "マッチング", 5: "SfM再構成"},
+                }
                 if pl.get("use_hloc"):
-                    _m = re.findall(r'\[(\d+)/4\]', _content)
+                    _m5 = re.findall(r'\[(\d+)/5\]', _content)
+                    _m4 = re.findall(r'\[(\d+)/4\]', _content)
+                    _m, _ts = (_m5, 5) if _m5 else (_m4, 4)
                 else:
-                    _m = re.findall(r'\[COLMAP (\d+)/4\]', _content)
+                    _m, _ts = re.findall(r'\[COLMAP (\d+)/4\]', _content), 4
                 if _m:
                     _cur = int(_m[-1])
-                    _pct = min(_cur / 4, 1.0)
-                    _bar_label = (f"ステップ {_cur}/4: {_colmap_step_names.get(_cur, '')} "
+                    _pct = min(_cur / _ts, 1.0)
+                    _bar_label = (f"ステップ {_cur}/{_ts}: {_colmap_sub[_ts].get(_cur, '')} "
                                   f"({_pct*100:.0f}%)")
 
             elif current_step == "training":
@@ -502,6 +514,54 @@ with col_sfm3:
         st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
         matcher_type = "superpoint+lightglue"
 
+# ── HLoc ペアリスト生成方式 ────────────────────────────────────────────────────
+RETRIEVAL_MODELS = ["netvlad", "openibl", "dir", "megaloc"]
+RETRIEVAL_DESC = {
+    "netvlad":  "VGG16-NetVLAD（定番・屋外向け）",
+    "openibl":  "OpenIBL（NetVLAD改良版）",
+    "dir":      "DIR（屋外シーン向け）",
+    "megaloc":  "MegaLoc（大規模シーン向け）",
+}
+if use_hloc:
+    st.markdown("**ペアリスト生成方式**")
+    pair_cols = st.columns([1, 1])
+    with pair_cols[0]:
+        pair_method = st.radio(
+            "方式",
+            ["exhaustive", "retrieval"],
+            index=0 if st.session_state.get("pl_pair_method", "exhaustive") == "exhaustive" else 1,
+            format_func=lambda x: "Exhaustive（全ペア・精度優先）" if x == "exhaustive"
+                                  else "Retrieval（類似画像のみ・速度優先）",
+            label_visibility="collapsed",
+        )
+        st.session_state["pl_pair_method"] = pair_method
+    with pair_cols[1]:
+        if pair_method == "retrieval":
+            ret_default = st.session_state.get("pl_retrieval_model", "netvlad")
+            ret_idx = RETRIEVAL_MODELS.index(ret_default) if ret_default in RETRIEVAL_MODELS else 0
+            retrieval_model = st.selectbox(
+                "検索モデル", RETRIEVAL_MODELS, index=ret_idx,
+                format_func=lambda x: RETRIEVAL_DESC.get(x, x),
+            )
+            st.session_state["pl_retrieval_model"] = retrieval_model
+            num_matched = st.number_input(
+                "top-K（1画像あたりのペア数）", min_value=5, max_value=100,
+                value=st.session_state.get("pl_num_matched", 20), step=5,
+            )
+            st.session_state["pl_num_matched"] = num_matched
+            n_images_est = len(list(Path("/workspace/experiments").rglob("input/*.jpg")))
+            pairs_est = n_images_est * num_matched if n_images_est else 0
+            if pairs_est:
+                st.caption(f"推定ペア数: 約 {pairs_est:,}")
+        else:
+            retrieval_model = "netvlad"
+            num_matched = 20
+            st.caption("全ペア総当たり。\n画像が多いと非常に時間がかかります。")
+else:
+    pair_method     = "exhaustive"
+    retrieval_model = "netvlad"
+    num_matched     = 20
+
 st.subheader("⚙️ 学習（Step 3）設定")
 
 col6, col7, col8 = st.columns(3)
@@ -568,6 +628,9 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "use_hloc": use_hloc,
             "feature_type": feature_type,
             "matcher_type": matcher_type,
+            "pair_method": pair_method,
+            "retrieval_model": retrieval_model,
+            "num_matched": num_matched,
             "camera_model": camera_model,
             "use_gpu": use_gpu,
             "iterations": iterations,

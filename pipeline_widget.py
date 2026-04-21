@@ -17,7 +17,11 @@ _STEP_JA = {
     "done":       "完了",
     "failed":     "失敗",
 }
-_COLMAP_SUB = {1: "特徴点抽出", 2: "マッチング", 3: "3D再構成", 4: "undistortion"}
+# COLMAP（4ステップ）と HLoc exhaustive（4ステップ）/ retrieval（5ステップ）に対応
+_COLMAP_SUB = {
+    4: {1: "特徴点抽出",    2: "マッチング",          3: "3D再構成",    4: "undistortion"},
+    5: {1: "局所特徴点抽出", 2: "グローバル特徴量抽出", 3: "ペアリスト生成", 4: "マッチング", 5: "SfM再構成"},
+}
 
 
 def _load_state() -> dict:
@@ -64,13 +68,18 @@ def _parse_progress(pl: dict) -> tuple:
 
     elif step == "colmap":
         if pl.get("use_hloc"):
-            m = re.findall(r'\[(\d+)/4\]', content)
+            # retrieval（5ステップ）か exhaustive（4ステップ）かをログから自動判定
+            m5 = re.findall(r'\[(\d+)/5\]', content)
+            m4 = re.findall(r'\[(\d+)/4\]', content)
+            m, total_steps = (m5, 5) if m5 else (m4, 4)
         else:
             m = re.findall(r'\[COLMAP (\d+)/4\]', content)
+            total_steps = 4
         if m:
             cur = int(m[-1])
-            pct = min(cur / 4, 1.0)
-            label = f"ステップ {cur}/4: {_COLMAP_SUB.get(cur, '')} ({pct*100:.0f}%)"
+            pct = min(cur / total_steps, 1.0)
+            sub = _COLMAP_SUB[total_steps].get(cur, "")
+            label = f"ステップ {cur}/{total_steps}: {sub} ({pct*100:.0f}%)"
 
     elif step == "training":
         total = pl.get("iterations", 30000)

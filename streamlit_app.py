@@ -257,15 +257,20 @@ else:
                         _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
 
         elif _step == "colmap":
-            _colmap_step_names = {1: "特徴点抽出", 2: "マッチング", 3: "3D再構成", 4: "undistortion"}
+            _colmap_sub = {
+                4: {1: "特徴点抽出",    2: "マッチング",          3: "3D再構成",    4: "undistortion"},
+                5: {1: "局所特徴点抽出", 2: "グローバル特徴量抽出", 3: "ペアリスト生成", 4: "マッチング", 5: "SfM再構成"},
+            }
             if _pl.get("use_hloc"):
-                _m = re.findall(r'\[(\d+)/4\]', _content)
+                _m5 = re.findall(r'\[(\d+)/5\]', _content)
+                _m4 = re.findall(r'\[(\d+)/4\]', _content)
+                _m, _ts = (_m5, 5) if _m5 else (_m4, 4)
             else:
-                _m = re.findall(r'\[COLMAP (\d+)/4\]', _content)
+                _m, _ts = re.findall(r'\[COLMAP (\d+)/4\]', _content), 4
             if _m:
                 _cur = int(_m[-1])
-                _pct = min(_cur / 4, 1.0)
-                _bar_label = (f"ステップ {_cur}/4: {_colmap_step_names.get(_cur, '')} "
+                _pct = min(_cur / _ts, 1.0)
+                _bar_label = (f"ステップ {_cur}/{_ts}: {_colmap_sub[_ts].get(_cur, '')} "
                               f"({_pct*100:.0f}%)")
 
         elif _step == "training":
