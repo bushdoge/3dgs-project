@@ -2,6 +2,7 @@
 # 通常動画はFFmpegでフレーム抽出、360度動画はピンホール変換を行ってから出力する
 
 import os
+import sys
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -71,7 +72,7 @@ is_360 = st.checkbox(
          "各フレームを複数のカメラ視点画像に変換します。",
 )
 
-selected_dirs = []
+sel_angles = []
 
 if is_360:
     st.info("各フレームを指定した方向のピンホールカメラ視点に変換します。")
@@ -86,19 +87,36 @@ if is_360:
         fps = st.number_input("抽出FPS", min_value=0.1, max_value=10.0, value=1.0, step=0.5,
                               help="360度動画は1枚あたり複数画像が生成されるため、低めのFPSを推奨します。")
 
-    direction_labels = {"front": "前", "right": "右", "back": "後", "left": "左",
-                        "up": "上", "down": "下"}
-    selected_dirs = st.multiselect(
-        "変換する方向",
-        list(direction_labels.keys()),
-        default=["front", "right", "back", "left"],
-        format_func=lambda x: f"{direction_labels[x]}（{x}）",
-    )
+    # 8×3 方向選択グリッド（水平45°刻み × 垂直-30°/0°/+30°）
+    st.markdown("**変換する方向を選択（水平角 × 垂直角）**")
+    YAW_ANGLES  = [0, 45, 90, 135, 180, 225, 270, 315]
+    PITCH_ANGLES = [30, 0, -30]
+    YAW_SHORT   = ["前\n0°", "45°", "右\n90°", "135°", "後\n180°", "225°", "左\n270°", "315°"]
+    PITCH_LABELS = {30: "上 +30°", 0: "水平  0°", -30: "下 −30°"}
 
-    if video_info and selected_dirs:
+    header_cols = st.columns([1.5] + [1] * 8)
+    header_cols[0].write("")
+    for i, label in enumerate(YAW_SHORT):
+        header_cols[i + 1].markdown(label)
+
+    angle_checks = {}
+    for pitch in PITCH_ANGLES:
+        row_cols = st.columns([1.5] + [1] * 8)
+        row_cols[0].markdown(f"**{PITCH_LABELS[pitch]}**")
+        for i, yaw in enumerate(YAW_ANGLES):
+            angle_checks[(yaw, pitch)] = row_cols[i + 1].checkbox(
+                "　",
+                value=(pitch == 0),
+                key=f"fe_360_y{yaw}_p{pitch}",
+                label_visibility="collapsed",
+            )
+
+    sel_angles = [(y, p) for (y, p), v in angle_checks.items() if v]
+
+    if video_info and sel_angles:
         duration = float(video_info.get("duration", 0))
-        est = int(duration * fps) * len(selected_dirs)
-        st.caption(f"出力予定枚数の目安: {est} 枚（{len(selected_dirs)}方向 × {int(duration * fps)}フレーム）")
+        est = int(duration * fps) * len(sel_angles)
+        st.caption(f"出力予定枚数の目安: {est} 枚（{len(sel_angles)}方向 × {int(duration * fps)}フレーム）")
 else:
     fov, out_w, out_h = 90, 1024, 1024  # 未使用だが変数として定義しておく
     fps = st.number_input("抽出FPS（フレーム/秒）", min_value=0.1, max_value=60.0,
@@ -160,12 +178,13 @@ if output_path:
 
 # ── コマンドプレビュー ────────────────────────────────────────────────────────
 st.subheader("実行コマンド（プレビュー）")
-if is_360 and selected_dirs:
+if is_360 and sel_angles:
+    angles_str = " ".join(f"{y},{p}" for y, p in sel_angles)
     cmd_str = (
         f'python /workspace/scripts/convert_360.py \\\n'
         f'  --input "{input_path}" --output "{output_path}" \\\n'
         f'  --fov {fov} --width {out_w} --height {out_h} \\\n'
-        f'  --fps {fps} --directions {" ".join(selected_dirs)}'
+        f'  --fps {fps} --angles {angles_str}'
     )
 else:
     cmd_str = (f'python /workspace/scripts/extract_frames.py '
@@ -175,7 +194,7 @@ st.code(cmd_str, language="bash")
 # ── 実行 ─────────────────────────────────────────────────────────────────────
 st.divider()
 
-can_run = bool(input_path and output_path and (not is_360 or selected_dirs))
+can_run = bool(input_path and output_path and (not is_360 or sel_angles))
 
 if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
     if not os.path.exists(input_path):
@@ -185,19 +204,19 @@ if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
 
         if is_360:
             cmd = [
-                "python", "/workspace/scripts/convert_360.py",
+                sys.executable, "/workspace/scripts/convert_360.py",
                 "--input", input_path,
                 "--output", output_path,
                 "--fov", str(fov),
                 "--width", str(out_w),
                 "--height", str(out_h),
                 "--fps", str(fps),
-                "--directions", *selected_dirs,
+                "--angles", *[f"{y},{p}" for y, p in sel_angles],
             ]
             spinner_msg = "360度変換中（動画が長いと数分かかります）..."
         else:
             cmd = [
-                "python", "/workspace/scripts/extract_frames.py",
+                sys.executable, "/workspace/scripts/extract_frames.py",
                 "--input", input_path,
                 "--output", output_path,
                 "--fps", str(fps),

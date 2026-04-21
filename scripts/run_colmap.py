@@ -28,7 +28,7 @@ def main():
     print(f"入力画像数: {n_images} 枚", flush=True)
 
     cmd = [
-        "python", "/opt/gaussian-splatting/convert.py",
+        sys.executable, "/opt/gaussian-splatting/convert.py",
         "--source_path", str(source),
         "--camera", args.camera_model,
     ]

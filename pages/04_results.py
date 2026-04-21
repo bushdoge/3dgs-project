@@ -1,5 +1,6 @@
 # 3DGS学習結果（レンダリング画像・ログ・ファイル構造）を確認するページ
 
+import subprocess
 import streamlit as st
 import re
 from pathlib import Path
@@ -144,14 +145,48 @@ for rd in render_dirs:
         images += sorted(rd.rglob("*.png")) + sorted(rd.rglob("*.jpg"))
 
 if images:
-    cols_per_row = st.slider("1行あたりの表示枚数", 2, 6, 4)
-    for i in range(0, min(len(images), 24), cols_per_row):
-        cols = st.columns(cols_per_row)
-        for j, col in enumerate(cols):
-            if i + j < len(images):
-                col.image(str(images[i + j]),
-                          caption=images[i + j].name,
-                          use_container_width=True)
+    # ── 動画ビューア ──────────────────────────────────────────────────────────
+    tab_video, tab_grid = st.tabs(["▶ 動画再生", "🖼️ 画像一覧"])
+
+    with tab_video:
+        video_path = Path("/workspace/tmp") / f"render_{exp_path.name}.mp4"
+        col_v1, col_v2, col_v3 = st.columns(3)
+        fps_v = col_v1.number_input("再生FPS", min_value=1, max_value=60, value=10)
+        max_frames = col_v2.number_input("最大フレーム数", min_value=10, max_value=1000,
+                                         value=min(300, len(images)))
+        if col_v3.button("🎬 動画を生成", use_container_width=True):
+            import tempfile, shutil
+            tmp_dir = Path(tempfile.mkdtemp())
+            use_imgs = images[:max_frames]
+            for i, img in enumerate(use_imgs):
+                shutil.copy(img, tmp_dir / f"frame_{i:06d}{img.suffix}")
+            result_v = subprocess.run([
+                "ffmpeg", "-y", "-framerate", str(fps_v),
+                "-i", str(tmp_dir / f"frame_%06d{use_imgs[0].suffix}"),
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video_path),
+            ], capture_output=True)
+            shutil.rmtree(tmp_dir)
+            if result_v.returncode == 0:
+                st.success(f"{len(use_imgs)} フレームから動画を生成しました。")
+            else:
+                st.error("動画生成に失敗しました。")
+
+        if video_path.exists():
+            st.video(str(video_path))
+            st.caption(f"保存先: `{video_path}`")
+        else:
+            st.info("「動画を生成」ボタンを押すとここに再生ビューアが表示されます。")
+
+    with tab_grid:
+        cols_per_row = st.slider("1行あたりの表示枚数", 2, 6, 4)
+        for i in range(0, min(len(images), 24), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(images):
+                    col.image(str(images[i + j]),
+                              caption=images[i + j].name,
+                              use_container_width=True)
 else:
     st.info("レンダリング画像が見つかりません。render.py を実行すると生成されます。")
 

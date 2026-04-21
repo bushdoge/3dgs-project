@@ -24,7 +24,7 @@ def main():
     Path(args.model_path).mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "python", "/opt/gaussian-splatting/train.py",
+        sys.executable, "/opt/gaussian-splatting/train.py",
         "-s", args.source,
         "--model_path", args.model_path,
         "--iterations", str(args.iterations),

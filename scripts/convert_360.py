@@ -60,17 +60,8 @@ def equirect_to_perspective(img, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
     return cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
 
 
-DIRECTIONS = {
-    "front":  (0,   0),
-    "right":  (90,  0),
-    "back":   (180, 0),
-    "left":   (270, 0),
-    "up":     (0,  90),
-    "down":   (0, -90),
-}
-
-
-def process_image(img_path, out_dir, fov, out_w, out_h, directions):
+def process_image(img_path, out_dir, fov, out_w, out_h, angles):
+    """angles: list of (yaw_deg, pitch_deg) tuples"""
     img = cv2.imread(str(img_path))
     if img is None:
         print(f"  読み込みエラー: {img_path}", flush=True)
@@ -78,10 +69,9 @@ def process_image(img_path, out_dir, fov, out_w, out_h, directions):
 
     stem = img_path.stem
     count = 0
-    for name in directions:
-        yaw, pitch = DIRECTIONS[name]
+    for yaw, pitch in angles:
         out = equirect_to_perspective(img, fov, yaw, pitch, out_w, out_h)
-        out_path = out_dir / f"{stem}_{name}.jpg"
+        out_path = out_dir / f"{stem}_y{int(yaw):03d}_p{int(pitch):+d}.jpg"
         cv2.imwrite(str(out_path), out, [cv2.IMWRITE_JPEG_QUALITY, 95])
         count += 1
     return count
@@ -114,11 +104,15 @@ def main():
     parser.add_argument("--height", type=int, default=1024, help="出力画像の高さ（デフォルト: 1024）")
     parser.add_argument("--fps", type=float, default=1.0,
                         help="動画入力時のフレーム抽出FPS（デフォルト: 1.0）")
-    parser.add_argument("--directions", nargs="+",
-                        default=["front", "right", "back", "left"],
-                        choices=list(DIRECTIONS.keys()),
-                        help="変換する方向（デフォルト: front right back left）")
+    parser.add_argument("--angles", nargs="+",
+                        default=["0,0", "90,0", "180,0", "270,0"],
+                        help="変換する角度ペア yaw,pitch（例: 0,0 45,30 90,-30）")
     args = parser.parse_args()
+
+    angles = []
+    for a in args.angles:
+        yaw_s, pitch_s = a.split(",")
+        angles.append((float(yaw_s), float(pitch_s)))
 
     input_path = Path(args.input)
     out_dir = Path(args.output)
@@ -140,7 +134,7 @@ def main():
 
     total = 0
     for i, img_path in enumerate(images, 1):
-        n = process_image(img_path, out_dir, args.fov, args.width, args.height, args.directions)
+        n = process_image(img_path, out_dir, args.fov, args.width, args.height, angles)
         total += n
         if i % 10 == 0 or i == len(images):
             print(f"  [{i}/{len(images)}] 変換中...", flush=True)

@@ -3,6 +3,7 @@
 
 import os
 import signal
+import sys
 import time
 import subprocess
 from datetime import datetime
@@ -19,17 +20,24 @@ DEFAULT_PIPELINE = {
     "step_status": {},     # {step_name: "running" | "done" | "error"}
     "experiment_dir": None,
     "video_path": None,
+    # フレーム抽出
     "fps": 2.0,
     "is_360": False,
     "fov": 90,
     "out_w": 1024,
     "out_h": 1024,
-    "directions": ["front", "right", "back", "left"],
+    "angles": [(0, 0), (90, 0), (180, 0), (270, 0)],
+    # 姿勢推定
+    "use_hloc": False,
+    "feature_type": "superpoint_max",
+    "matcher_type": "superpoint+lightglue",
     "camera_model": "OPENCV",
+    "use_gpu": True,
+    # 学習
     "iterations": 30000,
     "save_iterations": [7000, 30000],
     "test_iterations": [7000, 30000],
-    "proc": None,          # 現在実行中の Popen
+    "proc": None,
     "log_path": None,
     "error_msg": None,
     "start_time": None,
@@ -105,11 +113,22 @@ def start_colmap():
     pl["step"] = "colmap"
     pl["step_status"]["colmap"] = "running"
 
-    cmd = [
-        "python", "/workspace/scripts/run_colmap.py",
-        "--source_path", exp_dir,
-        "--camera_model", pl["camera_model"],
-    ]
+    if pl["use_hloc"]:
+        cmd = [
+            sys.executable, "/workspace/scripts/run_hloc.py",
+            "--source_path", exp_dir,
+            "--feature_type", pl["feature_type"],
+            "--matcher_type", pl["matcher_type"],
+        ]
+    else:
+        cmd = [
+            sys.executable, "/workspace/scripts/run_colmap.py",
+            "--source_path", exp_dir,
+            "--camera_model", pl["camera_model"],
+        ]
+        if not pl["use_gpu"]:
+            cmd.append("--no_gpu")
+
     log_file = open(log_path, "w")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
 
@@ -124,7 +143,7 @@ def start_training():
     pl["step_status"]["training"] = "running"
 
     cmd = [
-        "python", "/workspace/scripts/run_train.py",
+        sys.executable, "/workspace/scripts/run_train.py",
         "--source", exp_dir,
         "--model_path", model_path,
         "--iterations", str(pl["iterations"]),
@@ -237,7 +256,7 @@ is_360 = st.checkbox(
     help="等距円筒形式の360度動画の場合にチェックしてください。",
 )
 
-sel_dirs = ["front", "right", "back", "left"]
+sel_angles = [(0, 0), (90, 0), (180, 0), (270, 0)]
 fov_val, out_w_val, out_h_val = 90, 1024, 1024
 
 if is_360:
@@ -250,13 +269,32 @@ if is_360:
         out_w_val = out_h_val = int(out_size.split("×")[0])
     with col_c:
         fps = st.number_input("抽出FPS", min_value=0.1, max_value=10.0, value=1.0, step=0.5)
-    direction_labels = {"front": "前", "right": "右", "back": "後", "left": "左",
-                        "up": "上", "down": "下"}
-    sel_dirs = st.multiselect(
-        "変換する方向", list(direction_labels.keys()),
-        default=["front", "right", "back", "left"],
-        format_func=lambda x: f"{direction_labels[x]}（{x}）",
-    )
+
+    # 8×3 方向選択グリッド（水平45°刻み × 垂直-30°/0°/+30°）
+    st.markdown("**変換する方向を選択（水平角 × 垂直角）**")
+    YAW_ANGLES   = [0, 45, 90, 135, 180, 225, 270, 315]
+    PITCH_ANGLES = [30, 0, -30]
+    YAW_SHORT    = ["前\n0°", "45°", "右\n90°", "135°", "後\n180°", "225°", "左\n270°", "315°"]
+    PITCH_LABELS = {30: "上 +30°", 0: "水平  0°", -30: "下 −30°"}
+
+    header_cols = st.columns([1.5] + [1] * 8)
+    header_cols[0].write("")
+    for i, label in enumerate(YAW_SHORT):
+        header_cols[i + 1].markdown(label)
+
+    angle_checks = {}
+    for pitch in PITCH_ANGLES:
+        row_cols = st.columns([1.5] + [1] * 8)
+        row_cols[0].markdown(f"**{PITCH_LABELS[pitch]}**")
+        for i, yaw in enumerate(YAW_ANGLES):
+            angle_checks[(yaw, pitch)] = row_cols[i + 1].checkbox(
+                "　",
+                value=(pitch == 0),
+                key=f"pl_360_y{yaw}_p{pitch}",
+                label_visibility="collapsed",
+            )
+
+    sel_angles = [(y, p) for (y, p), v in angle_checks.items() if v]
 else:
     fps = st.number_input("抽出FPS", min_value=0.1, max_value=30.0, value=2.0, step=0.5)
 
@@ -265,24 +303,86 @@ st.subheader("🏷️ 実験名の設定")
 col3, col4 = st.columns(2)
 with col3:
     scene_name = Path(video_path).stem if video_path else "scene"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    default_name = f"{timestamp}_{scene_name}"
-    exp_name = st.text_input("実験フォルダ名", value=default_name)
+    # 動画が変わったときだけデフォルト名を再生成（それ以外はユーザー編集を維持）
+    if st.session_state.get("_exp_scene") != scene_name or "exp_name" not in st.session_state:
+        st.session_state["_exp_scene"] = scene_name
+        st.session_state["exp_name"] = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{scene_name}"
+    exp_name = st.text_input("実験フォルダ名", key="exp_name")
     experiment_dir = f"/workspace/experiments/{exp_name}"
     st.caption(f"作成先: `{experiment_dir}`")
 
-st.subheader("⚙️ COLMAP・学習パラメータ")
+st.subheader("⚙️ 姿勢推定（Step 2）設定")
 
-col5, col6, col7 = st.columns(3)
-with col5:
-    camera_model = st.selectbox("カメラモデル", ["OPENCV", "PINHOLE", "SIMPLE_RADIAL"])
+# プリセット
+PRESETS = [
+    ("COLMAP\n（標準）",         False, None,             None),
+    ("SuperPoint\n+LightGlue",  True,  "superpoint_max", "superpoint+lightglue"),
+    ("SuperPoint\n+SuperGlue",  True,  "superpoint_max", "superglue"),
+    ("DISK\n+LightGlue",        True,  "disk",           "disk+lightglue"),
+    ("SIFT\n+NN",               True,  "sift",           "NN-ratio"),
+]
+st.caption("▼ プリセット（クリックで下の設定に反映）")
+preset_cols = st.columns(len(PRESETS))
+for col, (label, hloc, feat, matcher) in zip(preset_cols, PRESETS):
+    if col.button(label, use_container_width=True, key=f"pl_preset_{label}"):
+        st.session_state["pl_use_hloc"] = hloc
+        if feat:
+            st.session_state["pl_feature"] = feat
+        if matcher:
+            st.session_state["pl_matcher"] = matcher
+        st.rerun()
+
+col_sfm1, col_sfm2, col_sfm3 = st.columns(3)
+
+FEATURE_OPTIONS = ["superpoint_max", "superpoint_aachen", "disk", "aliked-n16",
+                   "sift", "r2d2", "d2net-ss"]
+MATCHER_OPTIONS = ["superpoint+lightglue", "disk+lightglue", "aliked+lightglue",
+                   "superglue", "superglue-fast", "NN-superpoint", "NN-ratio",
+                   "NN-mutual", "adalam"]
+
+with col_sfm1:
+    use_hloc = st.checkbox("HLocを使用", value=st.session_state.get("pl_use_hloc", False))
+    st.session_state["pl_use_hloc"] = use_hloc
+    if not use_hloc:
+        camera_model = st.selectbox("カメラモデル", ["OPENCV", "PINHOLE", "SIMPLE_RADIAL"])
+        use_gpu = st.checkbox("GPU使用", value=True)
+    else:
+        camera_model = "OPENCV"
+        use_gpu = True
+
+with col_sfm2:
+    if use_hloc:
+        feat_default = st.session_state.get("pl_feature", "superpoint_max")
+        feat_idx = FEATURE_OPTIONS.index(feat_default) if feat_default in FEATURE_OPTIONS else 0
+        feature_type = st.selectbox("特徴点抽出器", FEATURE_OPTIONS, index=feat_idx)
+        st.session_state["pl_feature"] = feature_type
+    else:
+        st.selectbox("特徴点抽出器", ["SIFT（COLMAP内蔵）"], disabled=True)
+        feature_type = "superpoint_max"
+
+with col_sfm3:
+    if use_hloc:
+        match_default = st.session_state.get("pl_matcher", "superpoint+lightglue")
+        match_idx = MATCHER_OPTIONS.index(match_default) if match_default in MATCHER_OPTIONS else 0
+        matcher_type = st.selectbox("マッチャー", MATCHER_OPTIONS, index=match_idx)
+        st.session_state["pl_matcher"] = matcher_type
+    else:
+        st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
+        matcher_type = "superpoint+lightglue"
+
+st.subheader("⚙️ 学習（Step 3）設定")
+
+col6, col7, col8 = st.columns(3)
 with col6:
     iterations = st.number_input("学習ステップ数", min_value=1000, max_value=100000,
                                  value=30000, step=1000)
 with col7:
     save_iters_str = st.text_input("保存タイミング", value="7000,30000")
+with col8:
+    test_iters_str = st.text_input("評価タイミング", value="7000,30000")
 
 save_iters = [int(s.strip()) for s in save_iters_str.split(",") if s.strip().isdigit()]
+test_iters = [int(s.strip()) for s in test_iters_str.split(",") if s.strip().isdigit()]
 
 st.divider()
 
@@ -300,18 +400,18 @@ if st.button("🚀 パイプラインを開始", type="primary",
 
         if is_360:
             cmd = [
-                "python", "/workspace/scripts/convert_360.py",
+                sys.executable, "/workspace/scripts/convert_360.py",
                 "--input", video_path,
                 "--output", input_dir,
                 "--fov", str(fov_val),
                 "--width", str(out_w_val),
                 "--height", str(out_h_val),
                 "--fps", str(fps),
-                "--directions", *sel_dirs,
+                "--angles", *[f"{y},{p}" for y, p in sel_angles],
             ]
         else:
             cmd = [
-                "python", "/workspace/scripts/extract_frames.py",
+                sys.executable, "/workspace/scripts/extract_frames.py",
                 "--input", video_path,
                 "--output", input_dir,
                 "--fps", str(fps),
@@ -332,11 +432,15 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "fov": fov_val,
             "out_w": out_w_val,
             "out_h": out_h_val,
-            "directions": sel_dirs,
+            "angles": sel_angles,
+            "use_hloc": use_hloc,
+            "feature_type": feature_type,
+            "matcher_type": matcher_type,
             "camera_model": camera_model,
+            "use_gpu": use_gpu,
             "iterations": iterations,
             "save_iterations": save_iters or [7000, 30000],
-            "test_iterations": save_iters or [7000, 30000],
+            "test_iterations": test_iters or [7000, 30000],
             "proc": proc,
             "log_path": log_path,
             "start_time": time.time(),

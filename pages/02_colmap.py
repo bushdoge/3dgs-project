@@ -1,23 +1,30 @@
-# COLMAPを使ってカメラ姿勢推定（Structure from Motion）を実行するページ
-# gaussian-splatting/convert.py を経由して実行する。入力は experiment/input/、出力は experiment/sparse/0/
-# COLMAP完了後にカメラ位置の3D可視化も表示する
+# COLMAPまたはHLocでカメラ姿勢推定（Structure from Motion）を実行するページ
+# バックエンドをプリセット or 自由組み合わせで選択できる。完了後にカメラ位置の3D可視化も表示する
 
 import sys
-import streamlit as st
 import subprocess
-import os
 import numpy as np
 from pathlib import Path
+
+import streamlit as st
 
 sys.path.insert(0, "/opt/gaussian-splatting")
 from scene.colmap_loader import read_extrinsics_binary, read_points3D_binary, qvec2rotmat
 
-st.set_page_config(page_title="COLMAP実行", page_icon="📷", layout="wide")
+st.set_page_config(page_title="姿勢推定", page_icon="📷", layout="wide")
 
-st.title("📷 COLMAP実行")
+st.title("📷 姿勢推定（COLMAP / HLoc）")
 st.caption("フレーム画像からカメラ姿勢を推定します（Structure from Motion）")
 
 st.divider()
+
+# ── セッション状態の初期化 ────────────────────────────────────────────────────
+if "sfm_use_hloc" not in st.session_state:
+    st.session_state.sfm_use_hloc = False
+if "sfm_feature" not in st.session_state:
+    st.session_state.sfm_feature = "superpoint_max"
+if "sfm_matcher" not in st.session_state:
+    st.session_state.sfm_matcher = "superpoint+lightglue"
 
 # ── 入力設定 ──────────────────────────────────────────────────────────────────
 st.subheader("入力設定")
@@ -25,7 +32,6 @@ st.subheader("入力設定")
 experiments_dir = Path("/workspace/experiments")
 exp_dirs = []
 if experiments_dir.exists():
-    # input/ フォルダが存在し、かつ画像が入っている実験ディレクトリを列挙
     for p in sorted(experiments_dir.iterdir()):
         if p.is_dir():
             inp = p / "input"
@@ -33,30 +39,95 @@ if experiments_dir.exists():
                 n = len(list(inp.glob("*.jpg"))) + len(list(inp.glob("*.png")))
                 exp_dirs.append((str(p), n))
 
-col1, col2 = st.columns(2)
+if exp_dirs:
+    labels = [f"{Path(d).name}  （{n}枚）" for d, n in exp_dirs]
+    idx = st.selectbox("実験フォルダ（input/ フォルダを含むもの）",
+                       range(len(exp_dirs)), format_func=lambda i: labels[i])
+    source_path = exp_dirs[idx][0]
+else:
+    st.warning("experiments/ 配下にフレームが入った input/ フォルダが見つかりません。\n"
+               "先にフレーム抽出を実行してください。")
+    source_path = st.text_input("実験フォルダのパスを直接入力",
+                                placeholder="/workspace/experiments/20240101_120000_scene1")
 
-with col1:
-    if exp_dirs:
-        labels = [f"{Path(d).name}  （{n}枚）" for d, n in exp_dirs]
-        idx = st.selectbox("実験フォルダ（input/ フォルダを含むもの）",
-                           range(len(exp_dirs)), format_func=lambda i: labels[i])
-        source_path = exp_dirs[idx][0]
-    else:
-        st.warning("experiments/ 配下にフレームが入った input/ フォルダが見つかりません。\n"
-                   "先にフレーム抽出を実行してください。")
-        source_path = st.text_input("実験フォルダのパスを直接入力",
-                                    placeholder="/workspace/experiments/20240101_120000_scene1")
+st.divider()
 
-with col2:
-    camera_model = st.selectbox(
-        "カメラモデル",
-        ["OPENCV", "PINHOLE", "SIMPLE_RADIAL", "SIMPLE_PINHOLE"],
-        help="通常はOPENCV推奨。360度変換済みや合成画像はPINHOLE。",
+# ── バックエンド設定 ──────────────────────────────────────────────────────────
+st.subheader("バックエンド設定")
+
+# プリセット定義
+PRESETS = [
+    ("COLMAP\n（標準）",           False, None,              None),
+    ("SuperPoint\n+ LightGlue",   True,  "superpoint_max",  "superpoint+lightglue"),
+    ("SuperPoint\n+ SuperGlue",   True,  "superpoint_max",  "superglue"),
+    ("DISK\n+ LightGlue",         True,  "disk",            "disk+lightglue"),
+    ("ALIKED\n+ LightGlue",       True,  "aliked-n16",      "aliked+lightglue"),
+    ("SIFT\n+ NN",                True,  "sift",            "NN-ratio"),
+]
+
+st.caption("▼ プリセット（クリックで下の設定に反映）")
+preset_cols = st.columns(len(PRESETS))
+for col, (label, hloc, feat, matcher) in zip(preset_cols, PRESETS):
+    if col.button(label, use_container_width=True):
+        st.session_state.sfm_use_hloc = hloc
+        if feat:
+            st.session_state.sfm_feature = feat
+        if matcher:
+            st.session_state.sfm_matcher = matcher
+        st.rerun()
+
+st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
+# 個別設定
+col_b1, col_b2, col_b3 = st.columns(3)
+
+with col_b1:
+    use_hloc = st.checkbox(
+        "HLocを使用",
+        value=st.session_state.sfm_use_hloc,
+        help="チェックなし = COLMAP標準（SIFT）。チェックあり = 深層学習ベースの特徴点（精度向上の可能性あり）。",
     )
+    st.session_state.sfm_use_hloc = use_hloc
 
-# ── 詳細設定 ──────────────────────────────────────────────────────────────────
-with st.expander("詳細設定"):
-    use_gpu = st.checkbox("GPU使用（SIFT特徴点抽出）", value=True)
+FEATURE_OPTIONS = ["superpoint_max", "superpoint_aachen", "disk", "aliked-n16",
+                   "sift", "r2d2", "d2net-ss"]
+MATCHER_OPTIONS = ["superpoint+lightglue", "disk+lightglue", "aliked+lightglue",
+                   "superglue", "superglue-fast", "NN-superpoint", "NN-ratio",
+                   "NN-mutual", "adalam"]
+
+with col_b2:
+    if use_hloc:
+        feat_idx = FEATURE_OPTIONS.index(st.session_state.sfm_feature) \
+            if st.session_state.sfm_feature in FEATURE_OPTIONS else 0
+        feature_type = st.selectbox("特徴点抽出器", FEATURE_OPTIONS, index=feat_idx)
+        st.session_state.sfm_feature = feature_type
+    else:
+        st.selectbox("特徴点抽出器", ["SIFT（COLMAP内蔵）"], disabled=True)
+        feature_type = None
+
+with col_b3:
+    if use_hloc:
+        match_idx = MATCHER_OPTIONS.index(st.session_state.sfm_matcher) \
+            if st.session_state.sfm_matcher in MATCHER_OPTIONS else 0
+        matcher_type = st.selectbox("マッチャー", MATCHER_OPTIONS, index=match_idx)
+        st.session_state.sfm_matcher = matcher_type
+    else:
+        st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
+        matcher_type = None
+
+# COLMAP固有設定
+with st.expander("詳細設定（COLMAP）", expanded=False):
+    if use_hloc:
+        st.info("HLoc使用時はカメラモデルは自動設定されます。")
+        camera_model = "OPENCV"
+        use_gpu = True
+    else:
+        camera_model = st.selectbox(
+            "カメラモデル",
+            ["OPENCV", "PINHOLE", "SIMPLE_RADIAL", "SIMPLE_PINHOLE"],
+            help="通常はOPENCV推奨。360度変換済みや合成画像はPINHOLE。",
+        )
+        use_gpu = st.checkbox("GPU使用（SIFT特徴点抽出）", value=True)
 
 # ── 出力先の説明 ──────────────────────────────────────────────────────────────
 if source_path:
@@ -69,13 +140,21 @@ if source_path:
 # ── コマンドプレビュー ────────────────────────────────────────────────────────
 st.subheader("実行コマンド（プレビュー）")
 
-cmd_args = [
-    "python /workspace/scripts/run_colmap.py",
-    f'--source_path "{source_path}"',
-    f"--camera_model {camera_model}",
-]
-if not use_gpu:
-    cmd_args.append("--no_gpu")
+if use_hloc:
+    cmd_args = [
+        "python /workspace/scripts/run_hloc.py",
+        f'--source_path "{source_path}"',
+        f"--feature_type {feature_type}",
+        f"--matcher_type {matcher_type}",
+    ]
+else:
+    cmd_args = [
+        "python /workspace/scripts/run_colmap.py",
+        f'--source_path "{source_path}"',
+        f"--camera_model {camera_model}",
+    ]
+    if not use_gpu:
+        cmd_args.append("--no_gpu")
 
 st.code(" \\\n  ".join(cmd_args), language="bash")
 
@@ -83,46 +162,51 @@ st.code(" \\\n  ".join(cmd_args), language="bash")
 if source_path:
     sparse_done = Path(source_path) / "sparse" / "0"
     if sparse_done.exists():
-        st.success("✅ すでにCOLMAPの出力（sparse/0/）が存在します。再実行すると上書きされます。")
+        st.success("✅ すでに sparse/0/ が存在します。再実行すると上書きされます。")
 
 # ── 実行 ─────────────────────────────────────────────────────────────────────
 st.divider()
-st.warning("⚠️ COLMAPはGPUを使用します。フレーム数によって数分〜数十分かかります。")
+st.warning("⚠️ GPUを使用します。フレーム数によって数分〜数十分かかります。")
 
-if st.button("▶ COLMAPを実行", type="primary", disabled=not source_path):
+btn_label = "▶ HLocを実行" if use_hloc else "▶ COLMAPを実行"
+if st.button(btn_label, type="primary", disabled=not source_path):
     input_dir = Path(source_path) / "input"
     if not input_dir.exists():
         st.error(f"input/ フォルダが見つかりません: {input_dir}")
     else:
-        st.info("COLMAPを実行中です。しばらくお待ちください...")
+        if use_hloc:
+            run_args = ["python", "/workspace/scripts/run_hloc.py",
+                        "--source_path", source_path,
+                        "--feature_type", feature_type,
+                        "--matcher_type", matcher_type]
+            spinner_msg = f"HLoc実行中（{feature_type} + {matcher_type}）..."
+        else:
+            run_args = ["python", "/workspace/scripts/run_colmap.py",
+                        "--source_path", source_path,
+                        "--camera_model", camera_model]
+            if not use_gpu:
+                run_args.append("--no_gpu")
+            spinner_msg = "COLMAP実行中（数分〜数十分かかります）..."
 
-        run_args = ["python", "/workspace/scripts/run_colmap.py",
-                    "--source_path", source_path,
-                    "--camera_model", camera_model]
-        if not use_gpu:
-            run_args.append("--no_gpu")
-
-        with st.spinner("COLMAP実行中（数分〜数十分かかります）..."):
+        with st.spinner(spinner_msg):
             result = subprocess.run(run_args, capture_output=True, text=True)
 
         if result.returncode == 0:
             sparse_dir = Path(source_path) / "sparse" / "0"
             if sparse_dir.exists():
-                n_cameras = len(list(sparse_dir.glob("*.bin")))
-                st.success("COLMAP が正常に完了しました！")
-                st.metric("sparse/0/ のファイル数", n_cameras)
+                st.success("姿勢推定が正常に完了しました！")
                 st.info(f"次のステップ：「🧠 3DGS学習実行」ページで `{source_path}` を選択してください。")
             else:
                 st.warning("完了しましたが sparse/0/ が見つかりません。ログを確認してください。")
         else:
-            st.error("COLMAPの実行中にエラーが発生しました。")
+            st.error("実行中にエラーが発生しました。")
 
         with st.expander("ログを表示"):
             st.text(result.stdout or "（出力なし）")
             if result.stderr:
                 st.text("STDERR:\n" + result.stderr)
 
-# ── COLMAP結果の可視化 ────────────────────────────────────────────────────────
+# ── 結果の可視化 ──────────────────────────────────────────────────────────────
 if source_path:
     sparse_dir = Path(source_path) / "sparse" / "0"
     images_bin = sparse_dir / "images.bin"
@@ -130,39 +214,33 @@ if source_path:
 
     if images_bin.exists():
         st.divider()
-        st.subheader("📍 COLMAP結果の可視化")
-        st.caption("推定されたカメラ位置（青）と疎な点群（灰）を3D表示します")
+        st.subheader("📍 推定結果の可視化")
+        st.caption("推定されたカメラ位置（青）と疎な点群を3D表示します")
 
         try:
             import plotly.graph_objects as go
 
-            # カメラ位置の取得
             images_data = read_extrinsics_binary(str(images_bin))
             cam_positions = []
             for img in images_data.values():
                 R = qvec2rotmat(img.qvec)
                 t = np.array(img.tvec)
-                pos = -R.T @ t
-                cam_positions.append(pos)
+                cam_positions.append(-R.T @ t)
             cam_positions = np.array(cam_positions)
 
             traces = []
 
-            # 疎な点群
             if points_bin.exists():
                 pts = read_points3D_binary(str(points_bin))
                 if pts:
                     xyz = np.array([p.xyz for p in pts.values()])
                     rgb = np.array([p.rgb for p in pts.values()])
                     colors = [f"rgb({r},{g},{b})" for r, g, b in rgb]
-
-                    # 点が多い場合は間引く
                     max_pts = 50000
                     if len(xyz) > max_pts:
                         idx = np.random.choice(len(xyz), max_pts, replace=False)
                         xyz = xyz[idx]
                         colors = [colors[i] for i in idx]
-
                     traces.append(go.Scatter3d(
                         x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
                         mode="markers",
@@ -170,13 +248,10 @@ if source_path:
                         name=f"点群（{len(xyz):,}点）",
                     ))
 
-            # カメラ位置
             traces.append(go.Scatter3d(
-                x=cam_positions[:, 0],
-                y=cam_positions[:, 1],
-                z=cam_positions[:, 2],
-                mode="markers+text",
-                marker=dict(size=5, color="blue", symbol="circle"),
+                x=cam_positions[:, 0], y=cam_positions[:, 1], z=cam_positions[:, 2],
+                mode="markers",
+                marker=dict(size=5, color="blue"),
                 name=f"カメラ（{len(cam_positions)}台）",
             ))
 
@@ -184,10 +259,8 @@ if source_path:
             fig.update_layout(
                 margin=dict(l=0, r=0, t=0, b=0),
                 legend=dict(x=0, y=1),
-                scene=dict(
-                    xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
-                    aspectmode="data",
-                ),
+                scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
+                           aspectmode="data"),
                 height=500,
             )
             st.plotly_chart(fig, use_container_width=True)
