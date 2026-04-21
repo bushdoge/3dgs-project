@@ -144,6 +144,7 @@ pages = [
     ("📊", "Compare\nResults",   "05_compare"),
     ("🗂️", "Experiment\nManager","06_experiment_manager"),
     ("⚡", "System\nMonitor",    "monitor"),
+    ("⚗️", "Mini\nGame",         "07_minigame"),
 ]
 
 nav_cols = st.columns(len(pages))
