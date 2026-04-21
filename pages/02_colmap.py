@@ -19,12 +19,12 @@ st.caption("フレーム画像からカメラ姿勢を推定します（Structur
 st.divider()
 
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
-if "sfm_use_hloc" not in st.session_state:
-    st.session_state.sfm_use_hloc = False
-if "sfm_feature" not in st.session_state:
-    st.session_state.sfm_feature = "superpoint_max"
-if "sfm_matcher" not in st.session_state:
-    st.session_state.sfm_matcher = "superpoint+lightglue"
+if "sfm_use_hloc"       not in st.session_state: st.session_state.sfm_use_hloc       = False
+if "sfm_feature"        not in st.session_state: st.session_state.sfm_feature        = "superpoint_max"
+if "sfm_matcher"        not in st.session_state: st.session_state.sfm_matcher        = "superpoint+lightglue"
+if "sfm_pair_method"    not in st.session_state: st.session_state.sfm_pair_method    = "exhaustive"
+if "sfm_retrieval_model" not in st.session_state: st.session_state.sfm_retrieval_model = "netvlad"
+if "sfm_num_matched"    not in st.session_state: st.session_state.sfm_num_matched    = 20
 
 # ── 入力設定 ──────────────────────────────────────────────────────────────────
 st.subheader("入力設定")
@@ -115,6 +115,57 @@ with col_b3:
         st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
         matcher_type = None
 
+# ── HLoc ペアリスト生成方式 ────────────────────────────────────────────────────
+RETRIEVAL_MODELS = ["netvlad", "openibl", "dir", "megaloc"]
+RETRIEVAL_DESC = {
+    "netvlad":  "VGG16-NetVLAD（定番・屋外向け）",
+    "openibl":  "OpenIBL（NetVLAD改良版）",
+    "dir":      "DIR（屋外シーン向け）",
+    "megaloc":  "MegaLoc（大規模シーン向け）",
+}
+
+if use_hloc:
+    st.markdown("**ペアリスト生成方式**")
+    pair_col1, pair_col2 = st.columns([1, 1])
+    with pair_col1:
+        pair_method = st.radio(
+            "方式",
+            ["exhaustive", "retrieval"],
+            index=0 if st.session_state.sfm_pair_method == "exhaustive" else 1,
+            format_func=lambda x: "Exhaustive（全ペア・精度優先）" if x == "exhaustive"
+                                  else "Retrieval（類似画像のみ・速度優先）",
+            label_visibility="collapsed",
+        )
+        st.session_state.sfm_pair_method = pair_method
+    with pair_col2:
+        if pair_method == "retrieval":
+            ret_idx = RETRIEVAL_MODELS.index(st.session_state.sfm_retrieval_model) \
+                if st.session_state.sfm_retrieval_model in RETRIEVAL_MODELS else 0
+            retrieval_model = st.selectbox(
+                "検索モデル", RETRIEVAL_MODELS, index=ret_idx,
+                format_func=lambda x: RETRIEVAL_DESC.get(x, x),
+            )
+            st.session_state.sfm_retrieval_model = retrieval_model
+            num_matched = st.number_input(
+                "top-K（1画像あたりのペア数）",
+                min_value=5, max_value=100,
+                value=st.session_state.sfm_num_matched, step=5,
+            )
+            st.session_state.sfm_num_matched = num_matched
+            if source_path:
+                inp = Path(source_path) / "input"
+                n = len(list(inp.glob("*.jpg"))) + len(list(inp.glob("*.png"))) if inp.exists() else 0
+                if n:
+                    st.caption(f"推定ペア数: 約 {n * num_matched:,}（全ペア: {n*(n-1)//2:,}）")
+        else:
+            retrieval_model = st.session_state.sfm_retrieval_model
+            num_matched     = st.session_state.sfm_num_matched
+            st.caption("全ペア総当たり。\n画像が多いと非常に時間がかかります。")
+else:
+    pair_method     = "exhaustive"
+    retrieval_model = st.session_state.sfm_retrieval_model
+    num_matched     = st.session_state.sfm_num_matched
+
 # COLMAP固有設定
 with st.expander("詳細設定（COLMAP）", expanded=False):
     if use_hloc:
@@ -146,7 +197,13 @@ if use_hloc:
         f'--source_path "{source_path}"',
         f"--feature_type {feature_type}",
         f"--matcher_type {matcher_type}",
+        f"--pair_method {pair_method}",
     ]
+    if pair_method == "retrieval":
+        cmd_args += [
+            f"--retrieval_model {retrieval_model}",
+            f"--num_matched {num_matched}",
+        ]
 else:
     cmd_args = [
         "python /workspace/scripts/run_colmap.py",
@@ -175,13 +232,18 @@ if st.button(btn_label, type="primary", disabled=not source_path):
         st.error(f"input/ フォルダが見つかりません: {input_dir}")
     else:
         if use_hloc:
-            run_args = ["python", "/workspace/scripts/run_hloc.py",
-                        "--source_path", source_path,
-                        "--feature_type", feature_type,
-                        "--matcher_type", matcher_type]
-            spinner_msg = f"HLoc実行中（{feature_type} + {matcher_type}）..."
+            run_args = [sys.executable, "/workspace/scripts/run_hloc.py",
+                        "--source_path",    source_path,
+                        "--feature_type",   feature_type,
+                        "--matcher_type",   matcher_type,
+                        "--pair_method",    pair_method,
+                        "--retrieval_model", retrieval_model,
+                        "--num_matched",    str(num_matched)]
+            method_label = f"retrieval/{retrieval_model} top-{num_matched}" \
+                           if pair_method == "retrieval" else "exhaustive"
+            spinner_msg = f"HLoc実行中（{feature_type} + {matcher_type} / {method_label}）..."
         else:
-            run_args = ["python", "/workspace/scripts/run_colmap.py",
+            run_args = [sys.executable, "/workspace/scripts/run_colmap.py",
                         "--source_path", source_path,
                         "--camera_model", camera_model]
             if not use_gpu:
