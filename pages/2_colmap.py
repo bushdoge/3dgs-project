@@ -1,10 +1,16 @@
 # COLMAPを使ってカメラ姿勢推定（Structure from Motion）を実行するページ
 # gaussian-splatting/convert.py を経由して実行する。入力は experiment/input/、出力は experiment/sparse/0/
+# COLMAP完了後にカメラ位置の3D可視化も表示する
 
+import sys
 import streamlit as st
 import subprocess
 import os
+import numpy as np
 from pathlib import Path
+
+sys.path.insert(0, "/opt/gaussian-splatting")
+from scene.colmap_loader import read_extrinsics_binary, read_points3D_binary, qvec2rotmat
 
 st.set_page_config(page_title="COLMAP実行", page_icon="📷", layout="wide")
 
@@ -115,3 +121,81 @@ if st.button("▶ COLMAPを実行", type="primary", disabled=not source_path):
             st.text(result.stdout or "（出力なし）")
             if result.stderr:
                 st.text("STDERR:\n" + result.stderr)
+
+# ── COLMAP結果の可視化 ────────────────────────────────────────────────────────
+if source_path:
+    sparse_dir = Path(source_path) / "sparse" / "0"
+    images_bin = sparse_dir / "images.bin"
+    points_bin = sparse_dir / "points3D.bin"
+
+    if images_bin.exists():
+        st.divider()
+        st.subheader("📍 COLMAP結果の可視化")
+        st.caption("推定されたカメラ位置（青）と疎な点群（灰）を3D表示します")
+
+        try:
+            import plotly.graph_objects as go
+
+            # カメラ位置の取得
+            images_data = read_extrinsics_binary(str(images_bin))
+            cam_positions = []
+            for img in images_data.values():
+                R = qvec2rotmat(img.qvec)
+                t = np.array(img.tvec)
+                pos = -R.T @ t
+                cam_positions.append(pos)
+            cam_positions = np.array(cam_positions)
+
+            traces = []
+
+            # 疎な点群
+            if points_bin.exists():
+                pts = read_points3D_binary(str(points_bin))
+                if pts:
+                    xyz = np.array([p.xyz for p in pts.values()])
+                    rgb = np.array([p.rgb for p in pts.values()])
+                    colors = [f"rgb({r},{g},{b})" for r, g, b in rgb]
+
+                    # 点が多い場合は間引く
+                    max_pts = 50000
+                    if len(xyz) > max_pts:
+                        idx = np.random.choice(len(xyz), max_pts, replace=False)
+                        xyz = xyz[idx]
+                        colors = [colors[i] for i in idx]
+
+                    traces.append(go.Scatter3d(
+                        x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+                        mode="markers",
+                        marker=dict(size=1, color=colors, opacity=0.5),
+                        name=f"点群（{len(xyz):,}点）",
+                    ))
+
+            # カメラ位置
+            traces.append(go.Scatter3d(
+                x=cam_positions[:, 0],
+                y=cam_positions[:, 1],
+                z=cam_positions[:, 2],
+                mode="markers+text",
+                marker=dict(size=5, color="blue", symbol="circle"),
+                name=f"カメラ（{len(cam_positions)}台）",
+            ))
+
+            fig = go.Figure(data=traces)
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0),
+                legend=dict(x=0, y=1),
+                scene=dict(
+                    xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
+                    aspectmode="data",
+                ),
+                height=500,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            c1, c2 = st.columns(2)
+            c1.metric("推定カメラ数", len(cam_positions))
+            if points_bin.exists() and pts:
+                c2.metric("疎な点群数", f"{len(pts):,} 点")
+
+        except Exception as e:
+            st.warning(f"可視化に失敗しました: {e}")
