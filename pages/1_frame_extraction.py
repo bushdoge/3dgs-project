@@ -21,20 +21,21 @@ st.subheader("入力設定")
 data_dir = Path("/workspace/data")
 video_files = []
 if data_dir.exists():
-    for ext in ("*.mp4", "*.mov", "*.avi", "*.mkv"):
-        video_files += [str(p.relative_to("/workspace")) for p in data_dir.rglob(ext)]
+    for subdir in ("360movies", "movies"):
+        for ext in ("*.mp4", "*.mov", "*.avi", "*.mkv"):
+            video_files += [str(p.relative_to("/workspace")) for p in (data_dir / subdir).rglob(ext)]
     video_files = sorted(video_files)
 
 col1, col2 = st.columns(2)
 
 with col1:
     if video_files:
-        selected_video = st.selectbox("動画ファイル（data/配下）", video_files)
+        selected_video = st.selectbox("動画ファイル（data/360movies/ または data/movies/）", video_files)
         input_path = f"/workspace/{selected_video}"
     else:
-        st.warning("data/ 配下に動画ファイルが見つかりません。")
+        st.warning("data/360movies/ または data/movies/ に動画ファイルが見つかりません。")
         input_path = st.text_input("動画ファイルのパスを直接入力",
-                                   placeholder="/workspace/data/scene1/video.mp4")
+                                   placeholder="/workspace/data/movies/scene1.mp4")
 
 with col2:
     fps = st.number_input("抽出FPS（フレーム/秒）", min_value=0.1, max_value=60.0,
@@ -110,7 +111,7 @@ st.divider()
 st.subheader("出力設定")
 
 if input_path:
-    scene_name = Path(input_path).parent.name
+    scene_name = Path(input_path).stem
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     default_exp = f"/workspace/experiments/{timestamp}_{scene_name}"
 else:

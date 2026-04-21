@@ -155,6 +155,20 @@ if images:
 else:
     st.info("レンダリング画像が見つかりません。render.py を実行すると生成されます。")
 
+# ── メモ（note.md） ───────────────────────────────────────────────────────────
+st.divider()
+st.subheader("📝 実験メモ（note.md）")
+
+note_path = exp_path / "note.md"
+current_note = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+
+new_note = st.text_area("メモを自由に記入できます（気づき・失敗原因・パラメータの感想など）",
+                         value=current_note, height=150, label_visibility="visible")
+
+if st.button("💾 メモを保存"):
+    note_path.write_text(new_note, encoding="utf-8")
+    st.success("メモを保存しました。")
+
 # ── config.yaml ───────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("⚙️ 実験設定（config.yaml）")

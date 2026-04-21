@@ -107,6 +107,12 @@ for exp in selected_exps:
         best_psnr_test = max(test_vals) if test_vals else None
         best_psnr_train = max(train_vals) if train_vals else None
 
+    note_path = exp / "note.md"
+    note_preview = ""
+    if note_path.exists():
+        first_line = note_path.read_text(encoding="utf-8").strip().splitlines()
+        note_preview = first_line[0][:40] if first_line else ""
+
     rows.append({
         "実験名": exp.name,
         "フレーム数": n_input,
@@ -114,6 +120,7 @@ for exp in selected_exps:
         "学習": f"✅ ({len(ply_files)}ply)" if ply_files else ("⏳" if has_output else "❌"),
         "PSNR (test)": f"{best_psnr_test:.2f} dB" if best_psnr_test else "-",
         "PSNR (train)": f"{best_psnr_train:.2f} dB" if best_psnr_train else "-",
+        "メモ": note_preview,
     })
 
 df_summary = pd.DataFrame(rows).set_index("実験名")

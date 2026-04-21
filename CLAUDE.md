@@ -33,10 +33,11 @@
 /workspace/
 ├── CLAUDE.md               # このファイル
 ├── streamlit_app.py        # ホーム画面（ToDo・使用方法・ナビゲーション）
-├── data/                   # 元動画・元画像置き場（削除・git add 厳禁）
-│   └── <scene_name>/       # シーンごとに分ける
-│       ├── video.mp4       # 元動画
-│       └── images/         # 元画像群
+├── data/                   # 元素材置き場（削除・git add 厳禁）
+│   ├── 360movies/          # 360度動画（例: garden.mp4）
+│   ├── movies/             # 通常動画（例: desk.mp4）
+│   └── images/             # 画像群（シーン名サブフォルダ必須）
+│       └── <scene_name>/   # 例: images/garden/001.jpg
 ├── experiments/            # 実験結果
 │   └── YYYYMMDD_HHMMSS_<scene_name>/   # 日時+シーン名
 │       ├── config.yaml     # 実験設定
@@ -45,7 +46,10 @@
 │       ├── output/         # 3DGS学習結果（point_cloud等）
 │       ├── renders/        # レンダリング結果
 │       ├── logs/           # 学習ログ
-│       └── source_video -> /workspace/data/<scene_name>/video.mp4  # シンボリックリンク
+│       ├── note.md         # 自由メモ（気づき・失敗原因など）
+│       └── source_video -> /workspace/data/{360movies,movies}/<scene_name>.mp4  # シンボリックリンク
+├── models/                 # 事前学習済みモデル置き場
+│   └── pretrained/         # 外部からDLしたモデルファイル
 ├── scripts/                # 各種処理スクリプト
 │   ├── extract_frames.py       # 動画→連番画像の切り出し
 │   ├── convert_360.py          # 360度動画のピンホール変換
@@ -56,7 +60,8 @@
 └── /opt/gaussian-splatting/    # 公式ソース（読み取り専用・直接変更禁止）
 ```
 
-> シーン名は元動画のファイル名または画像フォルダ名から自動で取得します。
+> シーン名は動画のファイル名（拡張子なし）または画像フォルダ名から自動で取得します。
+> 入力タイプの対応：360度動画 → `data/360movies/`、通常動画 → `data/movies/`、画像群 → `data/images/<scene_name>/`
 
 ---
 
@@ -117,7 +122,7 @@
 streamlit run /workspace/streamlit_app.py
 
 # フレーム抽出（例）
-python scripts/extract_frames.py --input data/scene1/video.mp4 --output experiments/YYYYMMDD_HHMMSS_scene1/frames/
+python scripts/extract_frames.py --input data/movies/scene1.mp4 --output experiments/YYYYMMDD_HHMMSS_scene1/frames/
 
 # COLMAP実行（例）
 python scripts/run_colmap.py --image_path experiments/YYYYMMDD_HHMMSS_scene1/frames/
