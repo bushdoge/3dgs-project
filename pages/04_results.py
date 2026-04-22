@@ -86,6 +86,117 @@ with col4:
         )
     st.metric("レンダリング画像", f"{n_renders} 枚" if n_renders else "なし")
 
+# ── COLMAP 再構成品質 ────────────────────────────────────────────────────────
+if has_colmap:
+    st.divider()
+    st.subheader("📐 COLMAP 再構成品質")
+    st.caption("sparse/0/ の cameras / images / points3D ファイルから再構成の品質を表示します。"
+               "登録率 ≥ 80%・再投影誤差 < 1.0 px が目安です。")
+
+    sparse_dir = exp_path / "sparse" / "0"
+
+    def _parse_cameras_txt(p):
+        cameras = []
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.strip().split()
+                if len(parts) >= 4:
+                    cameras.append({"model": parts[1], "width": int(parts[2]), "height": int(parts[3])})
+        return cameras
+
+    def _parse_images_txt(p):
+        count = 0
+        with open(p, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("#") or not line:
+                i += 1
+                continue
+            count += 1
+            i += 2
+        return count
+
+    def _parse_points3d_txt(p):
+        errors = []
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.strip().split()
+                if len(parts) >= 8:
+                    try:
+                        errors.append(float(parts[7]))
+                    except ValueError:
+                        pass
+        return len(errors), (sum(errors) / len(errors) if errors else 0.0)
+
+    cam_txt  = sparse_dir / "cameras.txt"
+    img_txt  = sparse_dir / "images.txt"
+    pts_txt  = sparse_dir / "points3D.txt"
+    cam_bin  = sparse_dir / "cameras.bin"
+    img_bin  = sparse_dir / "images.bin"
+    pts_bin  = sparse_dir / "points3D.bin"
+
+    use_text = cam_txt.exists() and img_txt.exists() and pts_txt.exists()
+    use_bin  = cam_bin.exists() and img_bin.exists() and pts_bin.exists()
+
+    if use_text or use_bin:
+        try:
+            if use_text:
+                cameras = _parse_cameras_txt(cam_txt)
+                n_reg   = _parse_images_txt(img_txt)
+                n_pts, mean_err = _parse_points3d_txt(pts_txt)
+            else:
+                import sys as _sys
+                _sys.path.insert(0, "/opt/gaussian-splatting/scene")
+                from colmap_loader import (read_intrinsics_binary,
+                                           read_extrinsics_binary,
+                                           read_points3D_binary)
+                cams_d  = read_intrinsics_binary(str(cam_bin))
+                imgs_d  = read_extrinsics_binary(str(img_bin))
+                pts_d   = read_points3D_binary(str(pts_bin))
+                cameras = [{"model": c.model, "width": c.width, "height": c.height}
+                           for c in cams_d.values()]
+                n_reg   = len(imgs_d)
+                _errs   = [p.error for p in pts_d.values()]
+                n_pts   = len(_errs)
+                mean_err = sum(_errs) / n_pts if n_pts else 0.0
+
+            n_total  = count_images(exp_path / "input")
+            reg_rate = (n_reg / n_total * 100) if n_total > 0 else 0.0
+
+            cq1, cq2, cq3, cq4 = st.columns(4)
+            cq1.metric("登録カメラ数",   f"{n_reg} 枚")
+            cq2.metric("登録率",
+                       f"{reg_rate:.1f}%",
+                       delta=f"全 {n_total} 枚中" if n_total else None,
+                       delta_color="off")
+            cq3.metric("3D点数",         f"{n_pts:,} 点")
+            cq4.metric("平均再投影誤差", f"{mean_err:.3f} px")
+
+            if mean_err == 0.0 and n_pts == 0:
+                st.info("points3D ファイルが空です（再構成に失敗している可能性があります）。")
+            elif mean_err < 1.0 and reg_rate >= 80:
+                st.success(f"✅ 再構成品質: 良好（誤差 {mean_err:.3f} px · 登録率 {reg_rate:.1f}%）")
+            elif mean_err < 2.0 and reg_rate >= 50:
+                st.warning(f"⚠️ 再構成品質: 普通（誤差 {mean_err:.3f} px · 登録率 {reg_rate:.1f}%）")
+            else:
+                st.error(f"❌ 再構成品質: 要確認（誤差 {mean_err:.3f} px · 登録率 {reg_rate:.1f}%）")
+
+            if cameras:
+                cam = cameras[0]
+                fmt = "テキスト" if use_text else "バイナリ"
+                st.caption(f"カメラモデル: {cam['model']} · 解像度: {cam['width']} × {cam['height']} px · 形式: {fmt}")
+
+        except Exception as _e:
+            st.warning(f"COLMAP ファイルの読み込みに失敗しました: {_e}")
+    else:
+        st.info("sparse/0/ に cameras / images / points3D ファイルが見つかりません。")
+
 # ── point_cloud 情報 ─────────────────────────────────────────────────────────
 if has_output:
     st.divider()

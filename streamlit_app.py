@@ -417,7 +417,7 @@ with st.expander("使用方法を表示する", expanded=False):
     ↓
 [Step 4] 3DGS Training（Gaussian Splatting 学習）
     ↓
-[Step 5] Results Viewer（評価・可視化）
+[Step 5] Results Viewer（評価・可視化・レンダリング実行）
 ```
 
 > **全ステップ自動実行は 🚀 Pipeline Runner から。**
@@ -428,36 +428,65 @@ with st.expander("使用方法を表示する", expanded=False):
 
 ### 各ページの説明
 
-| ページ | 内容 |
+| ページ | 主な機能 |
 |---|---|
-| 🚀 Pipeline Runner | フレーム抽出→姿勢推定→学習を一括自動実行。進捗はホーム画面にも表示される |
-| 🎞️ Frame Extraction | 動画から連番画像を切り出す。360度動画は方向・FOV・解像度を指定してピンホール変換 |
-| 📐 COLMAP / HLoc | COLMAP または HLoc でカメラ姿勢推定（SfM）。プリセット選択 or 詳細カスタマイズが可能。HLoc はペア生成方式（Exhaustive / Retrieval）を選択できる。完了後にカメラ位置の3D可視化あり |
-| 🧠 3DGS Training | Gaussian Splatting の学習を実行。リアルタイムでログ・Loss・PSNR グラフを表示。学習中断ボタンあり |
-| 🖼️ Results Viewer | 学習済みモデルの進捗・保存済み point_cloud・PSNR 推移グラフ・レンダリング画像・メモを確認 |
-| 📊 Compare Results | 複数の実験結果を横並びで比較。フレーム数・COLMAP 状態・PSNR・レンダリング画像を一覧表示 |
-| 🗂️ Experiment Manager | 実験フォルダの一覧・ディスク使用量・メモ編集・フォルダ削除を管理 |
-| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視。パイプライン進捗ウィジェットも表示 |
-| ⚗️ Mini Game | 実験の合間に息抜き。ガウシアンを育てるアイドルゲーム（セーブあり） |
-| 🐾 Pet Gaus | たまごっち風ペット育成。実時間でステータスが変化し、パイプライン完了で豪華なエサがもらえる |
+| 🚀 Pipeline Runner | フレーム抽出→姿勢推定→学習を一括自動実行。**設定プリセット**で姿勢推定・学習パラメータを保存・呼び出せる。進捗はホーム画面にも表示される |
+| 🎞️ Frame Extraction | 動画から連番画像を切り出す。360度動画は方向（8×3グリッド）・FOV・解像度を指定してピンホール変換 |
+| 📐 COLMAP / HLoc | COLMAP または HLoc でカメラ姿勢推定（SfM）。HLoc はペア生成方式（Exhaustive / Retrieval）と特徴量・マッチャーを詳細設定できる。完了後にカメラ位置の3D可視化あり |
+| 🧠 3DGS Training | Gaussian Splatting の学習を実行。リアルタイムでログ・PSNR グラフを表示。学習中断ボタンあり |
+| 🖼️ Results Viewer | パイプライン進捗・**COLMAP再構成品質**（登録率・3D点数・再投影誤差）・保存済み point_cloud・PSNR推移・**レンダリング実行**・画像・動画生成・メモを確認 |
+| 📊 Compare Results | 複数実験を選択して **PSNR・L1 Loss の学習曲線を重ね比較**。split（test/train）と指標を切り替え可能。最良値サマリーテーブルも表示 |
+| 🗂️ Experiment Manager | 実験一覧・ディスク管理。**ログ閲覧**（フレーム抽出/COLMAP/学習/レンダリングを個別タブ）・**設定確認**（config.yaml・cfg_args）・メモ編集・フォルダ削除 |
+| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視とパイプライン進捗ウィジェット |
+| ⚗️ Mini Game | ガウシアンを育てるアイドルゲーム。プレステージで強化パックがもらえる |
+| 🐾 Pet Gaus | たまごっち風ペット育成。実時間でステータスが変化。パイプライン完了・ログイン・マイルストーン達成でアイテム獲得 |
+
+---
+
+### 設定プリセットの使い方（🚀 Pipeline Runner）
+
+よく使う姿勢推定・学習パラメータを名前をつけて保存しておくと、次回以降の実験で素早く呼び出せます。
+
+1. **保存**: Pipeline Runner で姿勢推定・学習設定を決めてから「📌 設定プリセット」を開き、名前を入力して「💾 保存」
+2. **読み込み**: 「📌 設定プリセット」でプリセット名を選択して「📂 読み込む」→ 設定欄に即反映
+3. **削除**: 「🗑️ 削除」ボタンで不要なプリセットを削除
+
+> プリセットには姿勢推定（HLoc/COLMAP・特徴量・マッチャー等）と学習（iter数・保存タイミング等）の設定が保存されます。FPS・360°設定は入力素材ごとに異なるため対象外。
+
+---
+
+### COLMAP 再構成品質の目安（🖼️ Results Viewer）
+
+COLMAP / HLoc が完了した実験では、`sparse/0/` の情報から以下の品質指標が表示されます。
+
+| 指標 | 目安 |
+|---|---|
+| 登録率（登録カメラ数 / 入力枚数） | 80% 以上で良好。50% 未満なら特徴点不足や類似フレームが多すぎる可能性 |
+| 3D 点数 | 多いほど点群が密。少なすぎると学習結果も荒くなる |
+| 平均再投影誤差 | 1.0 px 未満で良好。2.0 px 超は要確認（画像ブレ・光量変化が原因のことが多い） |
+
+品質が低い場合は、FPS を下げてフレーム数を減らす / HLoc の特徴量を変える / 動画の撮影条件を見直すことを検討してください。
 
 ---
 
 ### 実験フォルダの構造
 
-実験結果は `experiments/YYYYMMDD_<scene_name>/` に保存されます。
+実験結果は `experiments/YYYYMMDD_HHMMSS_<scene_name>/` に保存されます。
 
 ```
 experiments/
-└── 20260421_CenterForest/
-    ├── input/              # 変換・抽出済み画像（COLMAP/HLoc の入力）
-    ├── sparse/             # SfM 結果（cameras.bin, images.bin, points3D.bin）
-    ├── output/             # 3DGS 学習結果
-    │   └── point_cloud/    # イテレーション別 point_cloud.ply
-    ├── renders/            # レンダリング結果
-    ├── extract_log.txt     # フレーム抽出ログ（先頭に実験設定あり）
-    ├── colmap_log.txt      # 姿勢推定ログ（先頭に実験設定あり）
-    └── output/train_log.txt  # 学習ログ（先頭に実験設定あり）
+└── 20260421_123456_CenterForest/
+    ├── input/                   # 変換・抽出済み画像（COLMAP/HLoc の入力）
+    ├── sparse/0/                # SfM 結果（cameras/images/points3D .txt or .bin）
+    ├── output/                  # 3DGS 学習結果
+    │   ├── point_cloud/         # イテレーション別 point_cloud.ply
+    │   ├── train_log.txt        # 学習ログ（PSNR・L1 Lossを含む）
+    │   └── cfg_args             # gaussian-splatting の学習引数（自動生成）
+    ├── renders/                 # レンダリング結果
+    ├── config.yaml              # 実験設定（Pipeline Runner が自動生成）
+    ├── extract_log.txt          # フレーム抽出ログ
+    ├── colmap_log.txt           # 姿勢推定ログ
+    └── note.md                  # 自由メモ（Results Viewer / Experiment Manager から編集可）
 ```
 
 ---
@@ -496,13 +525,22 @@ python scripts/run_train.py \\
   --iterations 30000
 ```
 
+**レンダリングを実行する**
+```bash
+python scripts/run_render.py \\
+  -m experiments/20260421_scene1/output/ \\
+  -s experiments/20260421_scene1/ \\
+  --iteration 30000
+```
+
 ---
 
 ### 注意事項
 
 - `data/` フォルダ内のファイルは **絶対に削除しない**でください（元動画・元画像が入っています）。
-- 3DGS 学習など GPU を長時間占有する処理は、実行前に必ず確認してください。
+- 3DGS 学習・レンダリングなど GPU を長時間占有する処理は、実行前に他の処理が動いていないか確認してください。
 - パイプライン実行中に `.py` ファイルを編集して Streamlit がリロードされても、サブプロセス（COLMAP・学習）は止まりません。
+- プリセットファイルは `tmp/pipeline_presets.json` に保存されます。
 """)
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────

@@ -16,6 +16,24 @@ import streamlit as st
 st.set_page_config(page_title="パイプライン実行", page_icon="🚀", layout="wide")
 
 PIPELINE_STATE_FILE = "/workspace/tmp/pipeline_state.json"
+PRESETS_FILE        = "/workspace/tmp/pipeline_presets.json"
+
+# ── プリセット管理 ───────────────────────────────────────────────────────────
+
+def load_presets() -> dict:
+    try:
+        p = Path(PRESETS_FILE)
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def save_presets(presets: dict):
+    Path(PRESETS_FILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(PRESETS_FILE).write_text(
+        json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 # ── パイプライン状態の永続化 ─────────────────────────────────────────────────
 
@@ -518,9 +536,88 @@ with col3:
     experiment_dir = f"/workspace/experiments/{exp_name}"
     st.caption(f"作成先: `{experiment_dir}`")
 
+# ── プリセット UI ─────────────────────────────────────────────────────────────
+presets = load_presets()
+with st.expander("📌 設定プリセット（保存・呼び出し）", expanded=False):
+    st.caption("姿勢推定・学習パラメータをまとめて保存できます。"
+               "下の設定を決めてから「💾 保存」、次回は「📂 読み込む」で即反映します。")
+    if presets:
+        pc1, pc2, pc3 = st.columns([4, 1, 1])
+        with pc1:
+            sel_preset = st.selectbox("保存済みプリセット", list(presets.keys()),
+                                      label_visibility="collapsed")
+        with pc2:
+            if st.button("📂 読み込む", use_container_width=True, key="load_preset_btn"):
+                p = presets[sel_preset]
+                st.session_state["pl_use_hloc"]        = bool(p.get("use_hloc", False))
+                st.session_state["pl_feature"]         = p.get("feature_type", "superpoint_max")
+                st.session_state["pl_matcher"]         = p.get("matcher_type", "superpoint+lightglue")
+                st.session_state["pl_pair_method"]     = p.get("pair_method", "exhaustive")
+                st.session_state["pl_retrieval_model"] = p.get("retrieval_model", "netvlad")
+                st.session_state["pl_num_matched"]     = int(p.get("num_matched", 20))
+                st.session_state["pl_camera_model"]    = p.get("camera_model", "OPENCV")
+                st.session_state["pl_use_gpu"]         = bool(p.get("use_gpu", True))
+                st.session_state["pl_iterations"]      = int(p.get("iterations", 30000))
+                save_iters_loaded = p.get("save_iterations", [7000, 30000])
+                test_iters_loaded = p.get("test_iterations", [7000, 30000])
+                st.session_state["pl_save_iters_str"]  = ",".join(str(i) for i in save_iters_loaded)
+                st.session_state["pl_test_iters_str"]  = ",".join(str(i) for i in test_iters_loaded)
+                st.toast(f"プリセット「{sel_preset}」を読み込みました。")
+                st.rerun()
+        with pc3:
+            if st.button("🗑️ 削除", use_container_width=True, key="delete_preset_btn"):
+                del presets[sel_preset]
+                save_presets(presets)
+                st.toast(f"プリセット「{sel_preset}」を削除しました。")
+                st.rerun()
+
+        # プリセット内容をサマリー表示
+        _p = presets.get(sel_preset, {})
+        _sfm = "HLoc" if _p.get("use_hloc") else "COLMAP"
+        _feat = _p.get("feature_type", "-") if _p.get("use_hloc") else _p.get("camera_model", "COLMAP内蔵")
+        st.caption(
+            f"姿勢推定: {_sfm} / {_feat}　｜　"
+            f"学習: {_p.get('iterations', '-')} iter　｜　"
+            f"保存: {_p.get('save_iterations', '-')}"
+        )
+        st.divider()
+    else:
+        st.info("保存済みプリセットがありません。")
+
+    pn_col1, pn_col2 = st.columns([4, 1])
+    with pn_col1:
+        new_preset_name = st.text_input("プリセット名を入力して保存",
+                                        placeholder="例: SuperPoint高精度30k / COLMAP標準",
+                                        label_visibility="collapsed")
+    with pn_col2:
+        if st.button("💾 保存", use_container_width=True, key="save_preset_btn"):
+            name = new_preset_name.strip()
+            if name:
+                _si = st.session_state.get("pl_save_iters_str", "7000,30000")
+                _ti = st.session_state.get("pl_test_iters_str", "7000,30000")
+                cur = {
+                    "use_hloc":        st.session_state.get("pl_use_hloc", False),
+                    "feature_type":    st.session_state.get("pl_feature", "superpoint_max"),
+                    "matcher_type":    st.session_state.get("pl_matcher", "superpoint+lightglue"),
+                    "pair_method":     st.session_state.get("pl_pair_method", "exhaustive"),
+                    "retrieval_model": st.session_state.get("pl_retrieval_model", "netvlad"),
+                    "num_matched":     int(st.session_state.get("pl_num_matched", 20)),
+                    "camera_model":    st.session_state.get("pl_camera_model", "OPENCV"),
+                    "use_gpu":         bool(st.session_state.get("pl_use_gpu", True)),
+                    "iterations":      int(st.session_state.get("pl_iterations", 30000)),
+                    "save_iterations": [int(s.strip()) for s in _si.split(",") if s.strip().isdigit()],
+                    "test_iterations": [int(s.strip()) for s in _ti.split(",") if s.strip().isdigit()],
+                }
+                presets[name] = cur
+                save_presets(presets)
+                st.toast(f"プリセット「{name}」を保存しました。")
+                st.rerun()
+            else:
+                st.warning("プリセット名を入力してください。")
+
 st.subheader("⚙️ 姿勢推定（Step 2）設定")
 
-# プリセット
+# 特徴量プリセット
 PRESETS = [
     ("COLMAP\n（標準）",         False, None,             None),
     ("SuperPoint\n+LightGlue",  True,  "superpoint_max", "superpoint+lightglue"),
@@ -551,8 +648,13 @@ with col_sfm1:
     use_hloc = st.checkbox("HLocを使用", value=st.session_state.get("pl_use_hloc", False))
     st.session_state["pl_use_hloc"] = use_hloc
     if not use_hloc:
-        camera_model = st.selectbox("カメラモデル", ["OPENCV", "PINHOLE", "SIMPLE_RADIAL"])
-        use_gpu = st.checkbox("GPU使用", value=True)
+        _cam_opts = ["OPENCV", "PINHOLE", "SIMPLE_RADIAL"]
+        _cam_def  = st.session_state.get("pl_camera_model", "OPENCV")
+        _cam_idx  = _cam_opts.index(_cam_def) if _cam_def in _cam_opts else 0
+        camera_model = st.selectbox("カメラモデル", _cam_opts, index=_cam_idx)
+        st.session_state["pl_camera_model"] = camera_model
+        use_gpu = st.checkbox("GPU使用", value=st.session_state.get("pl_use_gpu", True))
+        st.session_state["pl_use_gpu"] = use_gpu
     else:
         camera_model = "OPENCV"
         use_gpu = True
@@ -630,11 +732,17 @@ st.subheader("⚙️ 学習（Step 3）設定")
 col6, col7, col8 = st.columns(3)
 with col6:
     iterations = st.number_input("学習ステップ数", min_value=1000, max_value=100000,
-                                 value=30000, step=1000)
+                                 value=int(st.session_state.get("pl_iterations", 30000)),
+                                 step=1000)
+    st.session_state["pl_iterations"] = iterations
 with col7:
-    save_iters_str = st.text_input("保存タイミング", value="7000,30000")
+    save_iters_str = st.text_input("保存タイミング",
+                                   value=st.session_state.get("pl_save_iters_str", "7000,30000"))
+    st.session_state["pl_save_iters_str"] = save_iters_str
 with col8:
-    test_iters_str = st.text_input("評価タイミング", value="7000,30000")
+    test_iters_str = st.text_input("評価タイミング",
+                                   value=st.session_state.get("pl_test_iters_str", "7000,30000"))
+    st.session_state["pl_test_iters_str"] = test_iters_str
 
 save_iters = [int(s.strip()) for s in save_iters_str.split(",") if s.strip().isdigit()]
 test_iters = [int(s.strip()) for s in test_iters_str.split(",") if s.strip().isdigit()]

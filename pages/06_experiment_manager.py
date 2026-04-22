@@ -1,6 +1,7 @@
 # 実験フォルダの一覧管理ページ
-# 各実験のステータス・ディスク使用量・メモを一覧表示し、削除やメモ編集をGUIで行う
+# 各実験のステータス・ディスク使用量・メモを一覧表示し、削除やメモ編集・ログ閲覧・設定確認をGUIで行う
 
+import re
 import shutil
 from pathlib import Path
 
@@ -86,6 +87,8 @@ st.divider()
 
 # ── 詳細操作パネル ────────────────────────────────────────────────────────────
 st.subheader("🔧 実験の詳細操作")
+st.caption("📝 メモ編集 / 📋 ログ閲覧（フレーム抽出・COLMAP・学習・レンダリング）"
+           " / ⚙️ 設定確認（config.yaml・学習引数） / 🗑️ フォルダ削除")
 
 exp_names = [e.name for e in exps]
 selected_name = st.selectbox("操作する実験を選択", exp_names)
@@ -95,7 +98,9 @@ if not selected_name:
 
 selected_exp = EXPERIMENTS_DIR / selected_name
 
-tab_note, tab_delete = st.tabs(["📝 メモ編集", "🗑️ フォルダ削除"])
+tab_note, tab_logs, tab_config, tab_delete = st.tabs(
+    ["📝 メモ編集", "📋 ログ閲覧", "⚙️ 設定確認", "🗑️ フォルダ削除"]
+)
 
 # ── メモ編集タブ ─────────────────────────────────────────────────────────────
 with tab_note:
@@ -106,6 +111,83 @@ with tab_note:
         note_path.write_text(new_note, encoding="utf-8")
         st.success("メモを保存しました。")
         st.rerun()
+
+# ── ログ閲覧タブ ─────────────────────────────────────────────────────────────
+with tab_logs:
+    LOG_DEFS = [
+        ("📥 フレーム抽出", selected_exp / "extract_log.txt"),
+        ("📐 COLMAP",       selected_exp / "colmap_log.txt"),
+        ("🧠 3DGS学習",     selected_exp / "output" / "train_log.txt"),
+        ("🎬 レンダリング", selected_exp / "output" / "render_log.txt"),
+    ]
+    available = [(label, path) for label, path in LOG_DEFS if path.exists()]
+
+    if not available:
+        st.info("ログファイルが見つかりません。パイプラインを実行するとここに表示されます。")
+    else:
+        log_tabs = st.tabs([label for label, _ in available])
+        for ltab, (label, log_path) in zip(log_tabs, available):
+            with ltab:
+                log_text = log_path.read_text(errors="replace")
+                st.caption(f"`{log_path.relative_to(selected_exp)}`　｜　{len(log_text.splitlines())} 行")
+
+                # 3DGS学習ログの場合は PSNR チャートも表示
+                if "train_log" in log_path.name and log_text:
+                    psnr_records = []
+                    for m in re.finditer(
+                        r"\[ITER (\d+)\] Evaluating (\w+): L1 [^\s]+ PSNR [^(\n]*\(([\d.]+)\)",
+                        log_text,
+                    ):
+                        psnr_records.append({
+                            "iteration": int(m.group(1)),
+                            "split":     m.group(2),
+                            "PSNR":      float(m.group(3)),
+                        })
+                    if psnr_records:
+                        import pandas as _pd
+                        st.markdown("**📈 PSNR 推移**")
+                        _df = _pd.DataFrame(psnr_records)
+                        _pivot = _df.pivot(index="iteration", columns="split", values="PSNR")
+                        st.line_chart(_pivot)
+
+                # COLMAP ログの場合は再構成サマリー行を強調
+                if "colmap_log" in log_path.name and log_text:
+                    summary_lines = [
+                        l for l in log_text.splitlines()
+                        if any(kw in l for kw in ("Registered", "registered", "points", "error", "残差"))
+                    ]
+                    if summary_lines:
+                        with st.expander("🔍 再構成サマリー行"):
+                            st.code("\n".join(summary_lines[-20:]), language=None)
+
+                with st.expander("ログ全文", expanded=True):
+                    lines = [l for l in log_text.splitlines() if l.strip()]
+                    st.code("\n".join(lines[-100:]) if len(lines) > 100 else "\n".join(lines),
+                            language=None)
+                    if len(lines) > 100:
+                        st.caption(f"最新 100 行を表示（全 {len(lines)} 行）")
+
+# ── 設定確認タブ ─────────────────────────────────────────────────────────────
+with tab_config:
+    config_path   = selected_exp / "config.yaml"
+    cfg_args_list = list((selected_exp / "output").rglob("cfg_args")) \
+                    if (selected_exp / "output").exists() else []
+
+    if config_path.exists():
+        st.markdown("**`config.yaml`**（実験設定）")
+        st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
+    else:
+        st.info("config.yaml が見つかりません。")
+
+    if cfg_args_list:
+        st.markdown("**`cfg_args`**（gaussian-splatting 学習引数）")
+        for cfg_file in cfg_args_list:
+            rel = cfg_file.relative_to(selected_exp)
+            with st.expander(str(rel), expanded=True):
+                st.code(cfg_file.read_text(errors="replace"), language="text")
+
+    if not config_path.exists() and not cfg_args_list:
+        st.info("設定ファイルが見つかりません。パイプラインを実行すると config.yaml が生成されます。")
 
 # ── 削除タブ ─────────────────────────────────────────────────────────────────
 with tab_delete:
