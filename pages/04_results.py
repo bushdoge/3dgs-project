@@ -1,11 +1,27 @@
-# 3DGS学習結果（レンダリング画像・ログ・ファイル構造）を確認するページ
+# 3DGS学習結果（レンダリング実行・画像・ログ・ファイル構造）を確認するページ
 
-import subprocess
-import streamlit as st
+import os
 import re
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
+import streamlit as st
+
 st.set_page_config(page_title="結果確認", page_icon="🖼️", layout="wide")
+
+# ── セッション状態の初期化 ────────────────────────────────────────────────────
+if "render_proc" not in st.session_state:
+    st.session_state.render_proc     = None
+    st.session_state.render_log_path = None
+    st.session_state.render_exp      = None
+
+
+def is_rendering() -> bool:
+    p = st.session_state.render_proc
+    return p is not None and p.poll() is None
 
 st.title("🖼️ 結果確認")
 st.caption("学習結果のレンダリング画像・ログ・ファイル構造を確認します")
@@ -85,6 +101,128 @@ if has_output:
             col.metric(it_dir.name, f"{size_mb:.1f} MB" if ply.exists() else "なし")
     else:
         st.info("point_cloud/ フォルダがまだありません。")
+
+# ── レンダリング実行 ──────────────────────────────────────────────────────────
+st.divider()
+st.subheader("🎬 レンダリング実行")
+
+pc_dir = exp_path / "output" / "point_cloud"
+iter_dirs = sorted(pc_dir.iterdir(), key=lambda p: p.name) if pc_dir.exists() else []
+iter_names = [d.name for d in iter_dirs if (d / "point_cloud.ply").exists()]
+
+if not iter_names:
+    st.info("学習済みモデル（point_cloud.ply）が見つかりません。先に3DGS学習を完了してください。")
+else:
+    # 別実験のレンダリングが走っていたらリセット
+    if st.session_state.render_exp and st.session_state.render_exp != str(exp_path):
+        st.session_state.render_proc = None
+        st.session_state.render_log_path = None
+        st.session_state.render_exp = None
+
+    rendering = is_rendering()
+    proc = st.session_state.render_proc
+
+    if rendering or (proc is not None and proc.poll() is not None):
+        # ── 実行中 / 完了後ビュー ──────────────────────────────────────────
+        done     = proc.poll() is not None
+        success  = done and proc.returncode == 0
+        failed   = done and proc.returncode != 0
+
+        if rendering:
+            st.markdown('<span style="color:#00aaff">🔄 レンダリング実行中...</span>',
+                        unsafe_allow_html=True)
+        elif success:
+            st.success("✅ レンダリング完了！")
+        else:
+            st.error(f"❌ エラーで終了しました（終了コード: {proc.returncode}）")
+
+        # ログ表示
+        log_path = Path(st.session_state.render_log_path or "")
+        if log_path.exists():
+            log_text = log_path.read_text(errors="replace")
+
+            # tqdm 進捗パース: "Rendering progress: N/M"
+            prog_m = re.findall(r'Rendering progress.*?(\d+)/(\d+)', log_text)
+            if prog_m:
+                cur, tot = int(prog_m[-1][0]), int(prog_m[-1][1])
+                st.progress(min(cur / tot, 1.0),
+                            text=f"フレーム {cur} / {tot} ({cur/tot*100:.0f}%)")
+
+            with st.expander("レンダリングログ", expanded=rendering):
+                lines = [l for l in log_text.split("\n") if l.strip()]
+                st.code("\n".join(lines[-30:]), language=None)
+
+        col_r1, col_r2 = st.columns([1, 5])
+        with col_r1:
+            if rendering:
+                if st.button("⏹ 中断", type="secondary"):
+                    try:
+                        os.kill(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                    st.session_state.render_proc = None
+                    st.rerun()
+            else:
+                if st.button("← 設定に戻る"):
+                    st.session_state.render_proc = None
+                    st.rerun()
+
+        if rendering:
+            time.sleep(2)
+            st.rerun()
+
+    else:
+        # ── 設定ビュー ────────────────────────────────────────────────────
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            sel_iter = st.selectbox(
+                "イテレーション",
+                ["最新（自動）"] + iter_names,
+                help="レンダリングに使うチェックポイントを選択",
+            )
+        with col_s2:
+            skip_train = st.checkbox("学習視点をスキップ",  value=False,
+                                     help="train用カメラのレンダリングを省略")
+            skip_test  = st.checkbox("テスト視点をスキップ", value=False,
+                                     help="test用カメラのレンダリングを省略")
+        with col_s3:
+            white_bg = st.checkbox("背景を白にする", value=False)
+
+        # コマンドプレビュー
+        iter_arg = "-1" if sel_iter == "最新（自動）" else sel_iter.replace("iteration_", "")
+        model_path = str(exp_path / "output")
+        cmd_preview = (
+            f"python scripts/run_render.py \\\n"
+            f"  -m {model_path} \\\n"
+            f"  -s {exp_path} \\\n"
+            f"  --iteration {iter_arg}"
+        )
+        if skip_train: cmd_preview += " \\\n  --skip_train"
+        if skip_test:  cmd_preview += " \\\n  --skip_test"
+        if white_bg:   cmd_preview += " \\\n  --white_background"
+        with st.expander("実行コマンド（プレビュー）", expanded=False):
+            st.code(cmd_preview, language="bash")
+
+        st.warning("⚠️ レンダリングはGPUを使用します。学習中は実行しないでください。")
+        if st.button("🎬 レンダリング開始", type="primary",
+                     disabled=(skip_train and skip_test)):
+            log_path = str(exp_path / "output" / "render_log.txt")
+            cmd = [
+                sys.executable, "/workspace/scripts/run_render.py",
+                "-m", model_path,
+                "-s", str(exp_path),
+                "--iteration", iter_arg,
+            ]
+            if skip_train: cmd.append("--skip_train")
+            if skip_test:  cmd.append("--skip_test")
+            if white_bg:   cmd.append("--white_background")
+
+            log_file = open(log_path, "w")
+            proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+            st.session_state.render_proc     = proc
+            st.session_state.render_log_path = log_path
+            st.session_state.render_exp      = str(exp_path)
+            st.rerun()
 
 # ── 学習ログとPSNR ────────────────────────────────────────────────────────────
 st.divider()
