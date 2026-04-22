@@ -239,3 +239,10 @@ if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
             st.text(result.stdout or "（出力なし）")
             if result.stderr:
                 st.text("STDERR:\n" + result.stderr)
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

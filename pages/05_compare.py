@@ -175,3 +175,10 @@ else:
         display = [imgs[i * step] for i in range(n_show) if i * step < len(imgs)]
         for col, img in zip(cols, display):
             col.image(str(img), caption=img.name, use_container_width=True)
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

@@ -136,25 +136,27 @@ st.markdown(
 st.markdown('<div class="section-title">Navigation</div>', unsafe_allow_html=True)
 
 pages = [
-    ("🚀", "Pipeline\nRunner",   "00_pipeline"),
-    ("🎞️", "Frame\nExtraction",  "01_frame_extraction"),
-    ("📐", "COLMAP\nEstimation", "02_colmap"),
-    ("🧠", "3DGS\nTraining",     "03_training"),
-    ("🖼️", "Results\nViewer",    "04_results"),
-    ("📊", "Compare\nResults",   "05_compare"),
-    ("🗂️", "Experiment\nManager","06_experiment_manager"),
-    ("⚡", "System\nMonitor",    "monitor"),
-    ("⚗️", "Mini\nGame",         "07_minigame"),
+    ("🚀", "Pipeline\nRunner",    "00_pipeline"),
+    ("🎞️", "Frame\nExtraction",   "01_frame_extraction"),
+    ("📐", "COLMAP\nEstimation",  "02_colmap"),
+    ("🧠", "3DGS\nTraining",      "03_training"),
+    ("🖼️", "Results\nViewer",     "04_results"),
+    ("📊", "Compare\nResults",    "05_compare"),
+    ("🗂️", "Experiment\nManager", "06_experiment_manager"),
+    ("⚡", "System\nMonitor",     "monitor"),
+    ("⚗️", "Mini\nGame",          "07_minigame"),
+    ("🐾", "Pet\nGaus",           "08_pet"),
 ]
 
-nav_cols = st.columns(len(pages))
-for col, (icon, label, page_name) in zip(nav_cols, pages):
-    with col:
-        st.page_link(
-            f"pages/{page_name}.py",
-            label=f"{icon}\n{label}",
-            use_container_width=True,
-        )
+for row_pages in [pages[:5], pages[5:]]:
+    nav_cols = st.columns(5)
+    for col, (icon, label, page_name) in zip(nav_cols, row_pages):
+        with col:
+            st.page_link(
+                f"pages/{page_name}.py",
+                label=f"{icon}\n{label}",
+                use_container_width=True,
+            )
 
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
@@ -235,7 +237,7 @@ else:
     _log_path = _pl.get("log_path")
     if _log_path and Path(_log_path).exists():
         _content = Path(_log_path).read_text(errors="replace")
-        _pct, _bar_label = None, ""
+        _pct, _bar_label, _substep_rendered = None, "", False
 
         if _step == "extracting":
             if _pl.get("is_360"):
@@ -257,21 +259,14 @@ else:
                         _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
 
         elif _step == "colmap":
-            _colmap_sub = {
-                4: {1: "特徴点抽出",    2: "マッチング",          3: "3D再構成",    4: "undistortion"},
-                5: {1: "局所特徴点抽出", 2: "グローバル特徴量抽出", 3: "ペアリスト生成", 4: "マッチング", 5: "SfM再構成"},
-            }
-            if _pl.get("use_hloc"):
-                _m5 = re.findall(r'\[(\d+)/5\]', _content)
-                _m4 = re.findall(r'\[(\d+)/4\]', _content)
-                _m, _ts = (_m5, 5) if _m5 else (_m4, 4)
-            else:
-                _m, _ts = re.findall(r'\[COLMAP (\d+)/4\]', _content), 4
-            if _m:
-                _cur = int(_m[-1])
-                _pct = min(_cur / _ts, 1.0)
-                _bar_label = (f"ステップ {_cur}/{_ts}: {_colmap_sub[_ts].get(_cur, '')} "
-                              f"({_pct*100:.0f}%)")
+            try:
+                from pipeline_widget import _parse_colmap_substeps, _render_substep_bars
+                _substeps = _parse_colmap_substeps(_pl)
+                if _substeps:
+                    _render_substep_bars(_substeps)
+                    _substep_rendered = True
+            except Exception:
+                pass
 
         elif _step == "training":
             _total = _pl.get("iterations", 30000)
@@ -289,7 +284,7 @@ else:
                 unsafe_allow_html=True,
             )
             st.progress(_pct)
-        else:
+        elif not _substep_rendered:
             st.caption("進捗を取得中...")
 
     # ── 最新ログ ──
@@ -410,16 +405,24 @@ with st.expander("使用方法を表示する", expanded=False):
 ```
 [Step 1] 動画を data/movies/ または data/360movies/ に配置
     ↓
-[Step 2] Frame Extraction（フレーム切り出し、360度はピンホール変換も）
+[Step 2] Frame Extraction
+         通常動画 → FFmpeg でフレーム抽出
+         360度動画 → 8方向ピンホール変換（方向・FOV・解像度を選択）
     ↓
-[Step 3] COLMAP Estimation（カメラ姿勢推定）
+[Step 3] カメラ姿勢推定
+         COLMAP（シンプル・高互換）
+         または HLoc（高精度・SuperPoint/LightGlue等）
+           └─ ペア生成: Exhaustive（全ペア・精度優先）
+                       / Retrieval（NetVLAD等で類似画像を選択・速度優先）
     ↓
 [Step 4] 3DGS Training（Gaussian Splatting 学習）
     ↓
 [Step 5] Results Viewer（評価・可視化）
 ```
 
-> 全ステップ自動実行は **Pipeline Runner** から。
+> **全ステップ自動実行は 🚀 Pipeline Runner から。**
+> Streamlit を再起動してもパイプラインの状態は自動復元されます。
+> 各ステップのログ先頭には実験設定が記録されます。
 
 ---
 
@@ -427,63 +430,87 @@ with st.expander("使用方法を表示する", expanded=False):
 
 | ページ | 内容 |
 |---|---|
-| 🚀 Pipeline Runner | ステップをまとめて自動実行する（ここから始めるのが最速） |
-| 🎞️ Frame Extraction | 動画から連番画像を切り出す（360度変換オプションあり） |
-| 📐 COLMAP Estimation | COLMAP でカメラ姿勢を推定する |
-| 🧠 3DGS Training | Gaussian Splatting の学習を実行する |
-| 🖼️ Results Viewer | 学習結果・レンダリング結果・メモを確認する |
-| 📊 Compare Results | 複数の実験結果を比較する |
-| 🗂️ Experiment Manager | 実験一覧・ディスク使用量・フォルダ削除 |
-| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視 |
+| 🚀 Pipeline Runner | フレーム抽出→姿勢推定→学習を一括自動実行。進捗はホーム画面にも表示される |
+| 🎞️ Frame Extraction | 動画から連番画像を切り出す。360度動画は方向・FOV・解像度を指定してピンホール変換 |
+| 📐 COLMAP / HLoc | COLMAP または HLoc でカメラ姿勢推定（SfM）。プリセット選択 or 詳細カスタマイズが可能。HLoc はペア生成方式（Exhaustive / Retrieval）を選択できる。完了後にカメラ位置の3D可視化あり |
+| 🧠 3DGS Training | Gaussian Splatting の学習を実行。リアルタイムでログ・Loss・PSNR グラフを表示。学習中断ボタンあり |
+| 🖼️ Results Viewer | 学習済みモデルの進捗・保存済み point_cloud・PSNR 推移グラフ・レンダリング画像・メモを確認 |
+| 📊 Compare Results | 複数の実験結果を横並びで比較。フレーム数・COLMAP 状態・PSNR・レンダリング画像を一覧表示 |
+| 🗂️ Experiment Manager | 実験フォルダの一覧・ディスク使用量・メモ編集・フォルダ削除を管理 |
+| ⚡ System Monitor | GPU / CPU / メモリのリアルタイム監視。パイプライン進捗ウィジェットも表示 |
+| ⚗️ Mini Game | 実験の合間に息抜き。ガウシアンを育てるアイドルゲーム（セーブあり） |
+| 🐾 Pet Gaus | たまごっち風ペット育成。実時間でステータスが変化し、パイプライン完了で豪華なエサがもらえる |
 
 ---
 
 ### 実験フォルダの構造
 
-実験結果は `experiments/YYYYMMDD_HHMMSS_<scene_name>/` に保存されます。
+実験結果は `experiments/YYYYMMDD_<scene_name>/` に保存されます。
 
 ```
 experiments/
-└── 20240420_120000_scene1/
-    ├── config.yaml      # 実験設定
-    ├── frames/          # 切り出し画像
-    ├── colmap/          # COLMAP 出力
-    ├── output/          # 3DGS 学習結果
-    ├── renders/         # レンダリング結果
-    └── logs/            # 学習ログ
+└── 20260421_CenterForest/
+    ├── input/              # 変換・抽出済み画像（COLMAP/HLoc の入力）
+    ├── sparse/             # SfM 結果（cameras.bin, images.bin, points3D.bin）
+    ├── output/             # 3DGS 学習結果
+    │   └── point_cloud/    # イテレーション別 point_cloud.ply
+    ├── renders/            # レンダリング結果
+    ├── extract_log.txt     # フレーム抽出ログ（先頭に実験設定あり）
+    ├── colmap_log.txt      # 姿勢推定ログ（先頭に実験設定あり）
+    └── output/train_log.txt  # 学習ログ（先頭に実験設定あり）
 ```
 
 ---
 
-### よくある操作
+### よくある操作（CLI）
 
-**動画からフレームを切り出す（CLI）**
+**通常動画からフレームを切り出す**
 ```bash
 python scripts/extract_frames.py \\
-  --input data/scene1/video.mp4 \\
-  --output experiments/YYYYMMDD_HHMMSS_scene1/frames/
+  --input data/movies/scene1.mp4 \\
+  --output experiments/20260421_scene1/input/ \\
+  --fps 1.0
 ```
 
-**COLMAP を実行する（CLI）**
+**360度動画をピンホール変換する**
 ```bash
-python scripts/run_colmap.py \\
-  --image_path experiments/YYYYMMDD_HHMMSS_scene1/frames/
+python scripts/convert_360.py \\
+  --input data/360movies/scene1.mp4 \\
+  --output experiments/20260421_scene1/input/ \\
+  --fov 90 --width 1024 --height 1024 --fps 1.0
 ```
 
-**3DGS 学習を実行する（CLI）**
+**HLoc でカメラ姿勢推定する**
+```bash
+python scripts/run_hloc.py \\
+  --source_path experiments/20260421_scene1/ \\
+  --feature_type superpoint_max \\
+  --matcher_type superpoint+lightglue \\
+  --pair_method retrieval --retrieval_model netvlad
+```
+
+**3DGS 学習を実行する**
 ```bash
 python scripts/run_train.py \\
-  --source experiments/YYYYMMDD_HHMMSS_scene1/
+  --source experiments/20260421_scene1/ \\
+  --iterations 30000
 ```
 
 ---
 
 ### 注意事項
 
-- `data/` フォルダ内のファイルは **絶対に削除しない**でください。
-- GPU を使う長時間処理は実行前に必ず確認しましょう。
-- 360度動画の場合はピンホール変換を先に行います。
+- `data/` フォルダ内のファイルは **絶対に削除しない**でください（元動画・元画像が入っています）。
+- 3DGS 学習など GPU を長時間占有する処理は、実行前に必ず確認してください。
+- パイプライン実行中に `.py` ファイルを編集して Streamlit がリロードされても、サブプロセス（COLMAP・学習）は止まりません。
 """)
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass
 
 # ── パイプライン実行中は5秒ごと自動更新（全UI描画後に実行） ──────────────────────
 if _pipeline_active:

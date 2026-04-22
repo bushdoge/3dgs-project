@@ -334,3 +334,10 @@ if source_path:
 
         except Exception as e:
             st.warning(f"可視化に失敗しました: {e}")
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

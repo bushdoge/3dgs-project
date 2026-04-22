@@ -272,3 +272,10 @@ if st.button("▶ 学習を開始", type="primary",
         st.session_state.train_iterations = iterations
 
         st.rerun()
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

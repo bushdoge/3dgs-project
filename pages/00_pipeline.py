@@ -121,12 +121,19 @@ def _pid_returncode(pid) -> int | None:
     実行中: None、終了（成功）: 0、終了（エラー）: 1 を返す。"""
     if not pid:
         return None
-    try:
-        os.kill(pid, 0)
-        return None  # プロセスはまだ生きている
-    except (ProcessLookupError, OSError):
-        pass
-    # プロセスが消えた → ログ末尾でエラー判定
+    # /proc/<pid>/status でゾンビ(Z)を検出する。
+    # os.kill(pid, 0) はゾンビに対しても成功してしまうため信頼できない。
+    status_path = Path(f"/proc/{pid}/status")
+    if status_path.exists():
+        try:
+            for line in status_path.read_text().splitlines():
+                if line.startswith("State:"):
+                    if "Z" in line:
+                        break  # ゾンビ = 終了済み → ログ判定へ
+                    return None  # 生きているプロセス
+        except OSError:
+            pass
+    # プロセスが消えた or ゾンビ → ログ末尾でエラー判定
     log_path = pl.get("log_path", "")
     if log_path and Path(log_path).exists():
         tail = Path(log_path).read_text(errors="replace").split("\n")[-15:]
@@ -174,6 +181,60 @@ def advance_pipeline():
         save_pipeline_state(pl)
 
 
+def _write_settings_header(log_file, step_label: str):
+    """ログファイルの先頭に実験設定を書き込む"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    angles_str = "  ".join(f"y={y}/p={p}" for y, p in pl.get("angles", []))
+    save_iters = ", ".join(str(i) for i in pl.get("save_iterations", []))
+    test_iters = ", ".join(str(i) for i in pl.get("test_iterations", []))
+    colmap_method = "HLoc" if pl.get("use_hloc") else "COLMAP"
+
+    lines = [
+        "=" * 64,
+        f"  実験設定  [{step_label}]  {now}",
+        "=" * 64,
+        f"  実験ディレクトリ : {pl.get('experiment_dir', '-')}",
+        f"  入力動画/ソース  : {pl.get('video_path', '-')}",
+        "",
+        "  [フレーム抽出]",
+    ]
+    if pl.get("is_360"):
+        lines += [
+            f"    360度変換 : あり  FOV={pl.get('fov')}°  {pl.get('out_w')}x{pl.get('out_h')}",
+            f"    向き      : {angles_str if angles_str else '-'}",
+        ]
+    else:
+        lines.append("    360度変換 : なし（通常動画）")
+    lines.append(f"    FPS       : {pl.get('fps')}")
+    lines += [
+        "",
+        f"  [カメラ推定 ({colmap_method})]",
+    ]
+    if pl.get("use_hloc"):
+        lines += [
+            f"    特徴量    : {pl.get('feature_type')}",
+            f"    マッチング: {pl.get('matcher_type')}",
+            f"    ペアリスト: {pl.get('pair_method')}  "
+            f"(retrieval={pl.get('retrieval_model')}, {pl.get('num_matched')} pairs)",
+        ]
+    else:
+        lines += [
+            f"    カメラモデル: {pl.get('camera_model')}",
+            f"    GPU         : {'あり' if pl.get('use_gpu') else 'なし'}",
+        ]
+    lines += [
+        "",
+        "  [3DGS学習]",
+        f"    イテレーション : {pl.get('iterations')}",
+        f"    保存           : {save_iters}",
+        f"    テスト         : {test_iters}",
+        "=" * 64,
+        "",
+    ]
+    log_file.write("\n".join(lines) + "\n")
+    log_file.flush()
+
+
 def start_colmap():
     exp_dir = pl["experiment_dir"]
     log_path = str(Path(exp_dir) / "colmap_log.txt")
@@ -201,6 +262,7 @@ def start_colmap():
             cmd.append("--no_gpu")
 
     log_file = open(log_path, "w")
+    _write_settings_header(log_file, "カメラ推定")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
     pl["pid"]  = pl["proc"].pid
     save_pipeline_state(pl)
@@ -224,6 +286,7 @@ def start_training():
         "--test_iterations", *[str(i) for i in pl["test_iterations"]],
     ]
     log_file = open(log_path, "w")
+    _write_settings_header(log_file, "3DGS学習")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
     pl["pid"]  = pl["proc"].pid
     save_pipeline_state(pl)
@@ -290,61 +353,61 @@ if pl["active"]:
         step_name_ja = {"extracting": "フレーム抽出", "colmap": "COLMAP", "training": "3DGS学習"}.get(current_step, current_step)
         st.info(f"**{step_name_ja}** を実行中...")
 
-        # ── ステップ別進捗バー ──────────────────────────────────────────────
-        if pl["log_path"] and Path(pl["log_path"]).exists():
-            _content = Path(pl["log_path"]).read_text(errors="replace")
-            _pct, _bar_label = None, ""
-            _colmap_step_names = {1: "特徴点抽出", 2: "マッチング", 3: "3D再構成", 4: "undistortion"}
+        # ── 全ステップ進捗バー ──────────────────────────────────────────────
+        try:
+            from pipeline_widget import (
+                _parse_colmap_substeps, _render_substep_bars, _parse_progress,
+            )
+            _exp_dir = pl.get("experiment_dir", "")
+            _step_logs = {
+                "extracting": str(Path(_exp_dir) / "extract_log.txt"),
+                "colmap":     str(Path(_exp_dir) / "colmap_log.txt"),
+                "training":   str(Path(_exp_dir) / "output" / "train_log.txt"),
+            }
+            _STEP_LABELS = {
+                "extracting": "① フレーム抽出",
+                "colmap":     "② COLMAP / HLoc",
+                "training":   "③ 3DGS 学習",
+            }
+            _COLOR = {"done": "#00cc66", "running": "#00aaff",
+                      "error": "#ff4444", "waiting": "#334455"}
+            _ICON  = {"done": "✅", "running": "🔄",
+                      "error": "❌", "waiting": "⏳"}
 
-            if current_step == "extracting":
-                if pl.get("is_360"):
-                    _m = re.findall(r'\[(\d+)/(\d+)\]', _content)
-                    if _m:
-                        _cur, _tot = int(_m[-1][0]), int(_m[-1][1])
-                        _pct = min(_cur / _tot, 1.0)
-                        _bar_label = f"フレーム変換: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
+            for _sk in ("extracting", "colmap", "training"):
+                _st = pl["step_status"].get(_sk, "waiting")
+                if current_step == _sk and _st != "done":
+                    _st = "running"
+                _c   = _COLOR.get(_st, "#334455")
+                _ico = _ICON.get(_st, "⏳")
+                st.markdown(
+                    f'<span style="color:{_c};font-size:0.82rem;font-weight:bold;">'
+                    f'{_ico} {_STEP_LABELS[_sk]}</span>',
+                    unsafe_allow_html=True,
+                )
+                if _st == "waiting":
+                    st.progress(0.0)
+                    continue
+                if _st == "done":
+                    st.progress(1.0)
+                    continue
+                # running: ログから進捗を取得
+                _pl_s = {**pl, "log_path": _step_logs[_sk], "step": _sk}
+                if _sk == "colmap":
+                    _subs = _parse_colmap_substeps(_pl_s)
+                    if _subs:
+                        _render_substep_bars(_subs)
+                    else:
+                        st.caption("ログを解析中...")
                 else:
-                    _tm = re.search(r'PROGRESS_TOTAL (\d+)', _content)
-                    _pm = re.findall(r'PROGRESS (\d+)/(\d+)', _content)
-                    if _tm and _pm:
-                        _tot = int(_tm.group(1))
-                        _cur = int(_pm[-1][0])
-                        if _tot > 0:
-                            _pct = min(_cur / _tot, 1.0)
-                            _bar_label = f"フレーム抽出: {_cur} / {_tot} 枚 ({_pct*100:.0f}%)"
-
-            elif current_step == "colmap":
-                _colmap_sub = {
-                    4: {1: "特徴点抽出",    2: "マッチング",          3: "3D再構成",    4: "undistortion"},
-                    5: {1: "局所特徴点抽出", 2: "グローバル特徴量抽出", 3: "ペアリスト生成", 4: "マッチング", 5: "SfM再構成"},
-                }
-                if pl.get("use_hloc"):
-                    _m5 = re.findall(r'\[(\d+)/5\]', _content)
-                    _m4 = re.findall(r'\[(\d+)/4\]', _content)
-                    _m, _ts = (_m5, 5) if _m5 else (_m4, 4)
-                else:
-                    _m, _ts = re.findall(r'\[COLMAP (\d+)/4\]', _content), 4
-                if _m:
-                    _cur = int(_m[-1])
-                    _pct = min(_cur / _ts, 1.0)
-                    _bar_label = (f"ステップ {_cur}/{_ts}: {_colmap_sub[_ts].get(_cur, '')} "
-                                  f"({_pct*100:.0f}%)")
-
-            elif current_step == "training":
-                _total = pl.get("iterations", 30000)
-                _tm = re.findall(rf'(\d+)/{_total}', _content)
-                if not _tm:
-                    _tm = re.findall(r'\[ITER\s+(\d+)\]', _content)
-                if _tm:
-                    _cur = int(_tm[-1])
-                    _pct = min(_cur / _total, 1.0)
-                    _bar_label = f"学習進捗: {_cur:,} / {_total:,} iter ({_pct*100:.0f}%)"
-
-            if _pct is not None:
-                st.caption(_bar_label)
-                st.progress(_pct)
-            else:
-                st.caption("進捗を取得中...")
+                    _pct, _lbl = _parse_progress(_pl_s)
+                    if _pct is not None:
+                        st.caption(_lbl)
+                        st.progress(_pct)
+                    else:
+                        st.caption("進捗を取得中...")
+        except Exception:
+            st.caption("進捗を取得中...")
 
         # ログ表示
         if pl["log_path"]:
@@ -609,14 +672,8 @@ if st.button("🚀 パイプラインを開始", type="primary",
                 "--fps", str(fps),
             ]
 
-        log_file = open(log_path, "w")
-        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-
-        st.session_state.pipeline = {
-            **DEFAULT_PIPELINE,
-            "active": True,
-            "step": "extracting",
-            "step_status": {"extracting": "running"},
+        # ヘッダー書き込みのために先にplを更新する（_write_settings_headerがplを参照するため）
+        pl.update({
             "experiment_dir": experiment_dir,
             "video_path": video_path,
             "fps": fps,
@@ -636,6 +693,17 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "iterations": iterations,
             "save_iterations": save_iters or [7000, 30000],
             "test_iterations": test_iters or [7000, 30000],
+        })
+        log_file = open(log_path, "w")
+        _write_settings_header(log_file, "フレーム抽出")
+        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+
+        st.session_state.pipeline = {
+            **DEFAULT_PIPELINE,
+            **pl,
+            "active": True,
+            "step": "extracting",
+            "step_status": {"extracting": "running"},
             "proc": proc,
             "pid": proc.pid,
             "log_path": log_path,
@@ -643,3 +711,10 @@ if st.button("🚀 パイプラインを開始", type="primary",
         }
         save_pipeline_state(st.session_state.pipeline)
         st.rerun()
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

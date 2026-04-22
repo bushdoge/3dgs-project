@@ -8,6 +8,7 @@ import subprocess
 import time
 import re
 import os
+from pathlib import Path
 from collections import deque
 from datetime import datetime
 
@@ -124,6 +125,31 @@ st.markdown(f"""
 
 
 # ── パース関数 ────────────────────────────────────────────────────────────────
+
+def _get_nvml_error_detail() -> str:
+    """NVMLが失敗した理由を /proc や ctypes で補足調査して返す"""
+    lines = []
+    # カーネルドライバ確認
+    try:
+        ver = Path("/proc/driver/nvidia/version").read_text().splitlines()[0]
+        lines.append(f"カーネルドライバ: {ver.split('Module')[1].strip().split()[0]}")
+    except Exception:
+        lines.append("カーネルドライバ: 情報取得不可")
+    # デバイスファイル確認
+    devs = [str(p) for p in Path("/dev").glob("nvidia*")]
+    lines.append(f"デバイスファイル: {', '.join(sorted(devs)) if devs else 'なし'}")
+    # NVMLエラーコード確認
+    try:
+        import ctypes
+        lib = ctypes.CDLL("libnvidia-ml.so.1")
+        code = lib.nvmlInit_v2()
+        meaning = {0: "SUCCESS", 3: "権限不足", 6: "ドライバ未ロード", 999: "UNKNOWN（再起動が必要）"}
+        lines.append(f"NVMLエラーコード: {code} — {meaning.get(code, '不明')}")
+    except Exception as e:
+        lines.append(f"NVML直接呼び出し失敗: {e}")
+    return " / ".join(lines)
+
+
 def parse_nvidia_smi():
     try:
         result = subprocess.run(
@@ -150,9 +176,9 @@ def parse_nvidia_smi():
                 "power_limit": sf(parts[8]), "fan": sf(parts[9]),
                 "clk_gpu": sf(parts[10]), "clk_mem": sf(parts[11]),
             })
-        return gpus
-    except:
-        return []
+        return gpus, None
+    except Exception as e:
+        return [], str(e)
 
 
 def parse_processes():
@@ -302,7 +328,7 @@ placeholder = st.empty()
 
 # ═════════════════════════════════════════════════════════════════════════════
 while True:
-    gpus  = parse_nvidia_smi()
+    gpus, gpu_err  = parse_nvidia_smi()
     procs = parse_processes()
     cpu   = parse_cpu()
     mem   = parse_memory()
@@ -337,7 +363,7 @@ while True:
             'margin-bottom:0.6rem;">Pipeline Status</div>',
             unsafe_allow_html=True,
         )
-        render_pipeline_status(compact=False)
+        render_pipeline_status(compact=True)
 
         st.divider()
 
@@ -345,7 +371,13 @@ while True:
         #  GPU セクション（シアン） — トグル
         # ══════════════════════════════════════
         if not gpus:
-            st.error("nvidia-smi からデータを取得できませんでした。")
+            detail = _get_nvml_error_detail()
+            st.warning(
+                "⚠️ **nvidia-smi からGPUデータを取得できません**\n\n"
+                f"{detail}\n\n"
+                "**対処法：** ホスト側で `docker restart <コンテナ名>` を実行してください。"
+                "コンテナ再起動後に GPU が認識されます。"
+            )
         else:
             for gpu in gpus:
                 mp  = gpu["mem_used"] / gpu["mem_total"] * 100 if gpu["mem_total"] else 0
@@ -506,5 +538,11 @@ while True:
 
     if not auto:
         break
+
+    try:
+        from pipeline_widget import render_sticky_footer
+        render_sticky_footer()
+    except Exception:
+        pass
 
     time.sleep(refresh_rate)

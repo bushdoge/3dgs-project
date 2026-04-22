@@ -110,7 +110,8 @@ MILESTONES = [
     (1_000,       "🏅 1K Gaussians！　最初のクラスタが動いた"),
     (10_000,      "🥈 10K Gaussians！　研究室が賑やかになってきた"),
     (100_000,     "🥈 100K Gaussians！　論文が書けそう"),
-    (1_000_000,   "🥇 1M Gaussians！　プレステージ解禁！"),
+    (1_000_000,   "🥇 1M Gaussians！　伝説の研究者への道が開けた"),
+    (100_000_000, "👑 100M Gaussians！　プレステージ解禁！"),
     (10_000_000,  "🥇 10M Gaussians！　伝説の研究者"),
     (1_000_000_000, "💠 1B Gaussians！　時空を超えた"),
     (1_000_000_000_000, "🌌 1T Gaussians！　宇宙を満たした"),
@@ -207,10 +208,12 @@ def do_tick(g: dict) -> float:
     g["last_tick"]        = now
     return earned
 
+PRESTIGE_BASE = 100_000_000  # 100M Gで初回プレステージ解禁
+
 def prestige_pts_available(g: dict) -> int:
-    if g["total_gaussians"] < 1_000_000:
+    if g["total_gaussians"] < PRESTIGE_BASE:
         return 0
-    return int(math.log10(g["total_gaussians"] / 1_000_000)) + 1
+    return int(math.log10(g["total_gaussians"] / PRESTIGE_BASE)) + 1
 
 def do_prestige(g: dict):
     new_pp = prestige_pts_available(g)
@@ -488,14 +491,14 @@ with left:
                 f'<div style="color:#a855f7;font-size:0.8rem;">'
                 f'✦ {g["prestige_points"]}pt（生産 ×{1+g["prestige_points"]*0.05:.2f}）<br>'
                 f'<span style="color:#4a90b8;font-size:0.7rem;">'
-                f'次: {fmt(10**(g["prestige_points"]) * 1_000_000)} G</span>'
+                f'次: {fmt(10**(g["prestige_points"]) * PRESTIGE_BASE)} G</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
                 '<span style="color:#2a6080;font-size:0.75rem;">'
-                '1M G 達成で解禁<br>全リセット＋永続ボーナス</span>',
+                '100M G 達成で解禁<br>全リセット＋永続ボーナス</span>',
                 unsafe_allow_html=True,
             )
 
@@ -702,5 +705,12 @@ with fc3:
 
 # ページロード完了後に自動セーブ & 1秒後に再実行
 save_game(g)
+
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass
+
 time.sleep(1)
 st.rerun()

@@ -219,3 +219,10 @@ else:
         st.code(cfg_args[0].read_text(), language="text")
     else:
         st.info("config ファイルが見つかりません。")
+
+# ── 固定フッター ──────────────────────────────────────────────────────────────
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass
