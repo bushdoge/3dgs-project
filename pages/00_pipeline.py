@@ -122,11 +122,42 @@ def step_badge(name, status):
     )
 
 
+def _filter_tqdm(text: str) -> str:
+    """tqdmのプログレスバー行（\r区切り含む）を先頭2行・末尾1行に圧縮して返す"""
+    # \r を \n に変換して行分割
+    lines = text.replace("\r", "\n").splitlines()
+    result = []
+    buf = []
+    for line in lines:
+        if re.search(r"\d+%\|", line):
+            buf.append(line)
+        else:
+            if buf:
+                kept = buf[:2]
+                if len(buf) > 3:
+                    kept.append(f"  ... （中間 {len(buf) - 3} 行省略）")
+                if len(buf) > 2:
+                    kept.append(buf[-1])
+                result.extend(kept)
+                buf = []
+            result.append(line)
+    if buf:
+        kept = buf[:2]
+        if len(buf) > 3:
+            kept.append(f"  ... （中間 {len(buf) - 3} 行省略）")
+        if len(buf) > 2:
+            kept.append(buf[-1])
+        result.extend(kept)
+    return "\n".join(result)
+
+
 def get_log_tail(log_path, n=30):
     p = Path(log_path)
     if not p.exists():
         return ""
-    lines = p.read_text(errors="replace").split("\n")
+    text = p.read_text(errors="replace")
+    filtered = _filter_tqdm(text)
+    lines = [l for l in filtered.split("\n") if l.strip()]
     return "\n".join(lines[-n:])
 
 

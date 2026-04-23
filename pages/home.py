@@ -127,10 +127,16 @@ else:
             st.caption(_bar_label)
             st.progress(_pct)
 
-        _lines = [l for l in _content.split("\n") if l.strip()]
-        if _lines:
+        # tqdmプログレスバー行を圧縮してから表示
+        _filtered = _content.replace("\r", "\n")
+        _lines = [l for l in _filtered.splitlines() if l.strip() and not re.search(r"^\s*\.\.\.", l)]
+        # プログレスバー行（%|）は最新1行だけ残す
+        _non_tqdm = [l for l in _lines if not re.search(r"\d+%\|", l)]
+        _tqdm_last = [l for l in _lines if re.search(r"\d+%\|", l)][-1:] if any(re.search(r"\d+%\|", l) for l in _lines) else []
+        _display = (_non_tqdm + _tqdm_last)[-5:]
+        if _display:
             with st.expander("最新ログ（直近5行）", expanded=False):
-                st.code("\n".join(_lines[-5:]), language=None)
+                st.code("\n".join(_display), language=None)
 
     _rc1, _rc2 = st.columns([1, 7])
     with _rc1:
