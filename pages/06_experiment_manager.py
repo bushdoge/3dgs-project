@@ -10,8 +10,8 @@ import streamlit as st
 
 
 def _filter_tqdm(text: str) -> str:
-    """tqdmのプログレスバー行（大量のログ）を先頭2行・末尾1行に圧縮して返す"""
-    lines = text.splitlines()
+    """tqdmのプログレスバー行（大量のログ）を先頭1行・末尾1行に圧縮して返す"""
+    lines = text.replace("\r", "\n").splitlines()
     result = []
     buf = []
     for line in lines:
@@ -19,21 +19,25 @@ def _filter_tqdm(text: str) -> str:
             buf.append(line)
         else:
             if buf:
-                kept = buf[:2]
-                if len(buf) > 3:
-                    kept.append(f"... ({len(buf) - 3} 行省略) ...")
+                result.append(buf[0])
                 if len(buf) > 2:
-                    kept.append(buf[-1])
-                result.extend(kept)
+                    omitted = len(buf) - 2
+                    result.append("")
+                    result.append(f"... ({omitted} 行省略) ...")
+                    result.append("")
+                if len(buf) > 1:
+                    result.append(buf[-1])
                 buf = []
             result.append(line)
     if buf:
-        kept = buf[:2]
-        if len(buf) > 3:
-            kept.append(f"... ({len(buf) - 3} 行省略) ...")
+        result.append(buf[0])
         if len(buf) > 2:
-            kept.append(buf[-1])
-        result.extend(kept)
+            omitted = len(buf) - 2
+            result.append("")
+            result.append(f"... ({omitted} 行省略) ...")
+            result.append("")
+        if len(buf) > 1:
+            result.append(buf[-1])
     return "\n".join(result)
 
 
@@ -248,7 +252,7 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 ### ログタブ
 - **学習ログ**：Loss・PSNRの推移グラフと生ログを表示します
 - **COLMAPログ**：再構成サマリー（登録画像数・点群数・再投影誤差）を強調表示します
-- tqdmプログレスバー行は自動的に圧縮されます（先頭2行＋末尾1行のみ表示）
+- tqdmプログレスバー行は自動的に圧縮されます（先頭1行＋末尾1行のみ表示）
 
 ---
 
