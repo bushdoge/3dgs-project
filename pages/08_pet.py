@@ -256,11 +256,39 @@ else:
 p = st.session_state.phase
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  サイドバー
+#  サイドバー（リセットのみ）
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### 🧬 ステータス")
-    st.caption(f"**{get_label()}**")
+    if st.button("🔄 リセット", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  メイン画面
+# ═════════════════════════════════════════════════════════════════════════════
+st.title("🥚 ガウスくん育成ゲーム")
+
+# ── キャラクター ＋ ステータス ────────────────────────────────────────────────
+char_col, stat_col = st.columns([1, 1])
+
+with char_col:
+    poop_str = " 💩" if st.session_state.poop else ""
+    st.markdown(
+        f'<div style="text-align:center;font-size:7rem;line-height:1.2;'
+        f'padding:1.5rem 0.5rem;border:2px solid #1e3a5c;border-radius:16px;'
+        f'background:rgba(0,229,255,0.03);">'
+        f'{get_emoji()}{poop_str}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<p style="text-align:center;color:#4a90b8;margin-top:0.4rem;">'
+        f'{get_label()}</p>',
+        unsafe_allow_html=True,
+    )
+
+with stat_col:
+    st.markdown("**🧬 ステータス**")
 
     # フェーズ進行バー
     if p in PHASE_DURATION:
@@ -283,43 +311,12 @@ with st.sidebar:
         rc.caption(f"**{val:.0f}**")
         st.progress(val / 100)
 
-    st.divider()
-
     if st.session_state.hunger < 25:
         st.warning("🍽️ お腹が空いています！")
     if st.session_state.cleanliness < 25 or st.session_state.poop:
         st.warning("🛁 きれいにしてあげて！")
     if st.session_state.stress > 70:
         st.warning("😰 ストレスが溜まってる！")
-
-    st.divider()
-
-    if st.button("🔄 リセット", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  メイン画面
-# ═════════════════════════════════════════════════════════════════════════════
-st.title("🥚 ガウスくん育成ゲーム")
-
-# ── キャラクター表示 ──────────────────────────────────────────────────────────
-_, char_col, _ = st.columns([1, 2, 1])
-with char_col:
-    poop_str = " 💩" if st.session_state.poop else ""
-    st.markdown(
-        f'<div style="text-align:center;font-size:7rem;line-height:1.2;'
-        f'padding:1.5rem 0.5rem;border:2px solid #1e3a5c;border-radius:16px;'
-        f'background:rgba(0,229,255,0.03);">'
-        f'{get_emoji()}{poop_str}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<p style="text-align:center;color:#4a90b8;margin-top:0.4rem;">'
-        f'{get_label()}</p>',
-        unsafe_allow_html=True,
-    )
 
 st.divider()
 
