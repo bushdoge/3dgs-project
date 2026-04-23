@@ -47,17 +47,128 @@ def save_todos(todos):
     with open(TODO_FILE, "w", encoding="utf-8") as f:
         json.dump(todos, f, ensure_ascii=False, indent=2)
 
-# ── ヘッダー ──────────────────────────────────────────────────────────────────
-st.markdown(
-    '<div style="font-size:2.2rem;font-weight:700;letter-spacing:0.15em;color:#00e5ff;'
-    'text-shadow:0 0 12px #00e5ff88;margin-bottom:0;">🔬 3DGS LAB</div>'
-    '<div style="font-size:0.75rem;color:#4a90b8;letter-spacing:0.2em;margin-top:0.2rem;'
-    'margin-bottom:1.5rem;">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>',
-    unsafe_allow_html=True,
-)
+# ── ヒーロー ──────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@keyframes scan-y {
+  0%   { top: -8%; }
+  100% { top: 108%; }
+}
+@keyframes cyan-pulse {
+  0%, 100% { text-shadow: 0 0 18px rgba(0,229,255,0.4), 0 0 50px rgba(0,229,255,0.15); }
+  50%       { text-shadow: 0 0 28px rgba(0,229,255,0.7), 0 0 80px rgba(0,229,255,0.28); }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes cur-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.hero-wrap {
+  position: relative;
+  padding: 2.8rem 0 2rem;
+  margin-bottom: 0.25rem;
+  overflow: hidden;
+  border-bottom: 1px solid #1a3a5c;
+}
+.hero-scan {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 60px;
+  background: linear-gradient(180deg, transparent 0%, rgba(0,229,255,0.045) 50%, transparent 100%);
+  animation: scan-y 7s linear infinite;
+  pointer-events: none;
+}
+.hero-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.32em;
+  color: #00ff9d;
+  text-transform: uppercase;
+  margin-bottom: 0.8rem;
+  opacity: 0;
+  animation: fade-up 0.5s 0.05s ease forwards;
+}
+.hero-badge::before {
+  content: '▸ ';
+  color: #00e5ff;
+  animation: cur-blink 2.5s step-end infinite;
+}
+.hero-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: clamp(3rem, 8vw, 5.2rem);
+  font-weight: 900;
+  line-height: 0.88;
+  color: #ddf0ff;
+  margin-bottom: 0.8rem;
+  opacity: 0;
+  animation: fade-up 0.55s 0.15s ease forwards;
+}
+.hero-title .hl {
+  color: #00e5ff;
+  animation: cyan-pulse 4s ease-in-out infinite;
+  display: inline-block;
+}
+.hero-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.26em;
+  color: #4a90b8;
+  margin-bottom: 1.8rem;
+  opacity: 0;
+  animation: fade-up 0.55s 0.25s ease forwards;
+}
+.hero-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 2.8rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid #1a3a5c;
+  opacity: 0;
+  animation: fade-up 0.55s 0.35s ease forwards;
+}
+.spec { display: flex; flex-direction: column; gap: 3px; }
+.spec-k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.18em;
+  color: #243a50;
+  text-transform: uppercase;
+}
+.spec-v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.73rem;
+  color: #00e5ff;
+  font-weight: 700;
+}
+</style>
+
+<div class="hero-wrap">
+  <div class="hero-scan"></div>
+  <div class="hero-badge">RESEARCH TERMINAL &mdash; SESSION ACTIVE</div>
+  <div class="hero-title">3DGS <span class="hl">LAB</span></div>
+  <div class="hero-sub">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>
+  <div class="hero-specs">
+    <div class="spec"><span class="spec-k">GPU</span><span class="spec-v">RTX A6000</span></div>
+    <div class="spec"><span class="spec-k">VRAM</span><span class="spec-v">48 GB</span></div>
+    <div class="spec"><span class="spec-k">CUDA</span><span class="spec-v">12.2</span></div>
+    <div class="spec"><span class="spec-k">ARCH</span><span class="spec-v">sm_86</span></div>
+    <div class="spec"><span class="spec-k">FRAMEWORK</span><span class="spec-v">3DGS v1.0</span></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── 実行中のタスク ─────────────────────────────────────────────────────────────
-st.markdown("### 実行中のタスク")
+st.markdown(
+    '<div style="font-family:\'Orbitron\',sans-serif;font-size:0.62rem;'
+    'letter-spacing:0.22em;color:#243a50;text-transform:uppercase;'
+    'padding:0.2rem 0 0.6rem;border-bottom:1px solid #1a3a5c;'
+    'margin-bottom:1rem;">▸ 実行中のタスク</div>',
+    unsafe_allow_html=True,
+)
 
 _pl = st.session_state.get("pipeline", {})
 if not _pl.get("active"):
@@ -143,7 +254,13 @@ else:
 st.divider()
 
 # ── ToDo ─────────────────────────────────────────────────────────────────────
-st.markdown("### ToDo リスト")
+st.markdown(
+    '<div style="font-family:\'Orbitron\',sans-serif;font-size:0.62rem;'
+    'letter-spacing:0.22em;color:#243a50;text-transform:uppercase;'
+    'padding:0.2rem 0 0.6rem;border-bottom:1px solid #1a3a5c;'
+    'margin-bottom:1rem;">▸ ToDo リスト</div>',
+    unsafe_allow_html=True,
+)
 
 todos = load_todos()
 
@@ -217,7 +334,7 @@ else:
 st.divider()
 
 # ── 使用方法 ──────────────────────────────────────────────────────────────────
-with st.expander("使用方法を表示する", expanded=False):
+with st.expander("📖 使用方法を表示する", expanded=False):
     st.markdown("""
 ### パイプライン全体の流れ
 
