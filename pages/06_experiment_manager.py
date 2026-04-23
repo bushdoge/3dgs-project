@@ -8,7 +8,34 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="実験管理", page_icon="🗂️", layout="wide")
+
+def _filter_tqdm(text: str) -> str:
+    """tqdmのプログレスバー行（大量のログ）を先頭2行・末尾1行に圧縮して返す"""
+    lines = text.splitlines()
+    result = []
+    buf = []
+    for line in lines:
+        if re.search(r"\d+%\|", line):
+            buf.append(line)
+        else:
+            if buf:
+                kept = buf[:2]
+                if len(buf) > 3:
+                    kept.append(f"... ({len(buf) - 3} 行省略) ...")
+                if len(buf) > 2:
+                    kept.append(buf[-1])
+                result.extend(kept)
+                buf = []
+            result.append(line)
+    if buf:
+        kept = buf[:2]
+        if len(buf) > 3:
+            kept.append(f"... ({len(buf) - 3} 行省略) ...")
+        if len(buf) > 2:
+            kept.append(buf[-1])
+        result.extend(kept)
+    return "\n".join(result)
+
 
 st.title("🗂️ 実験管理")
 st.caption("実験フォルダの一覧・ディスク使用量・メモ管理・削除")
@@ -161,7 +188,8 @@ with tab_logs:
                             st.code("\n".join(summary_lines[-20:]), language=None)
 
                 with st.expander("ログ全文", expanded=True):
-                    lines = [l for l in log_text.splitlines() if l.strip()]
+                    filtered = _filter_tqdm(log_text)
+                    lines = [l for l in filtered.splitlines() if l.strip()]
                     st.code("\n".join(lines[-100:]) if len(lines) > 100 else "\n".join(lines),
                             language=None)
                     if len(lines) > 100:
@@ -200,6 +228,35 @@ with tab_delete:
         shutil.rmtree(selected_exp)
         st.success(f"`{selected_name}` を削除しました。")
         st.rerun()
+
+# ── 使い方（詳細） ────────────────────────────────────────────────────────────
+with st.expander("📖 使い方（詳細）", expanded=False):
+    st.markdown("""
+### 実験一覧の見方
+
+| 列 | 説明 |
+|---|---|
+| フォルダ名 | `YYYYMMDD_HHMMSS_<シーン名>` 形式 |
+| フレーム | 抽出済み画像の有無 |
+| COLMAP | カメラ姿勢推定の完了有無（sparse/0/ の存在） |
+| 3DGS | 学習済みモデルの有無（output/*.ply の存在） |
+| サイズ | フォルダの総ディスク使用量 |
+| メモ | note.md の先頭行（編集可能） |
+
+---
+
+### ログタブ
+- **学習ログ**：Loss・PSNRの推移グラフと生ログを表示します
+- **COLMAPログ**：再構成サマリー（登録画像数・点群数・再投影誤差）を強調表示します
+- tqdmプログレスバー行は自動的に圧縮されます（先頭2行＋末尾1行のみ表示）
+
+---
+
+### 削除
+- 実験フォルダ名を手動入力することで誤削除を防止しています
+- 削除した実験は**元に戻せません**。必要なデータは事前にバックアップしてください
+- `data/` 配下の元動画は削除されません（実験フォルダのみ削除）
+""")
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────
 try:

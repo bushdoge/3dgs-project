@@ -13,7 +13,6 @@ from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="パイプライン実行", page_icon="🚀", layout="wide")
 
 PIPELINE_STATE_FILE = "/workspace/tmp/pipeline_state.json"
 PRESETS_FILE        = "/workspace/tmp/pipeline_presets.json"
@@ -89,6 +88,7 @@ DEFAULT_PIPELINE = {
     "iterations": 30000,
     "save_iterations": [7000, 30000],
     "test_iterations": [7000, 30000],
+    "eval": False,
     "proc": None,
     "pid": None,       # サブプロセスのPID（再起動後の復元用）
     "log_path": None,
@@ -303,6 +303,8 @@ def start_training():
         "--save_iterations", *[str(i) for i in pl["save_iterations"]],
         "--test_iterations", *[str(i) for i in pl["test_iterations"]],
     ]
+    if pl.get("eval"):
+        cmd.append("--eval")
     log_file = open(log_path, "w")
     _write_settings_header(log_file, "3DGS学習")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
@@ -562,6 +564,7 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
                 test_iters_loaded = p.get("test_iterations", [7000, 30000])
                 st.session_state["pl_save_iters_str"]  = ",".join(str(i) for i in save_iters_loaded)
                 st.session_state["pl_test_iters_str"]  = ",".join(str(i) for i in test_iters_loaded)
+                st.session_state["pl_use_eval"]        = bool(p.get("eval", False))
                 st.toast(f"プリセット「{sel_preset}」を読み込みました。")
                 st.rerun()
         with pc3:
@@ -747,6 +750,17 @@ with col8:
 save_iters = [int(s.strip()) for s in save_iters_str.split(",") if s.strip().isdigit()]
 test_iters = [int(s.strip()) for s in test_iters_str.split(",") if s.strip().isdigit()]
 
+use_eval = st.checkbox(
+    "train/test 分割を有効にする（--eval）",
+    value=st.session_state.get("pl_use_eval", False),
+    help="ONにすると8枚に1枚をtestデータとして学習から除外し、未学習視点でPSNRを評価します。研究・比較目的に推奨。",
+)
+st.session_state["pl_use_eval"] = use_eval
+if use_eval:
+    st.caption("📊 testデータ: 入力画像の約12.5%（8枚に1枚）が自動で割り当てられます。学習には残り87.5%が使われます。")
+else:
+    st.caption("📊 全フレームを学習に使用します。test PSNRは計算されません。")
+
 st.divider()
 
 st.error("⚠️ 学習はGPUを長時間占有します。他の処理が動いていないか確認してください。")
@@ -801,6 +815,7 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "iterations": iterations,
             "save_iterations": save_iters or [7000, 30000],
             "test_iterations": test_iters or [7000, 30000],
+            "eval": use_eval,
         })
         log_file = open(log_path, "w")
         _write_settings_header(log_file, "フレーム抽出")
@@ -819,6 +834,52 @@ if st.button("🚀 パイプラインを開始", type="primary",
         }
         save_pipeline_state(st.session_state.pipeline)
         st.rerun()
+
+# ── 使い方（詳細） ────────────────────────────────────────────────────────────
+with st.expander("📖 使い方（詳細）", expanded=False):
+    st.markdown("""
+### パイプラインの流れ
+
+```
+[Step 1] 動画 / 360度動画 → フレーム抽出（FFmpeg）
+[Step 2] フレーム群 → カメラ姿勢推定（COLMAP または HLoc）
+[Step 3] 姿勢推定結果 → 3DGS学習
+```
+
+全ステップを自動で順番に実行します。途中のステップから再開も可能です。
+
+---
+
+### 入力種別
+
+| 種別 | 配置場所 | 備考 |
+|---|---|---|
+| 通常動画 | `data/movies/` | mp4, mov など |
+| 360度動画 | `data/360movies/` | 等距円筒（Equirectangular）形式 |
+
+---
+
+### 姿勢推定の選択
+
+| 方式 | 特徴 | 推奨シーン |
+|---|---|---|
+| **COLMAP**（デフォルト） | 汎用・安定 | 手持ち撮影・一般的なシーン |
+| **HLoc** | 高精度・SuperPoint使用 | 難しいシーン・繰り返しパターン |
+
+---
+
+### 学習パラメータ
+
+| パラメータ | 説明 | 目安 |
+|---|---|---|
+| 学習ステップ数 | 多いほど高品質・長時間 | 確認7k、標準30k、高品質100k |
+| train/test 分割（--eval） | 8枚に1枚をtest用に確保、未学習視点でPSNR評価 | 研究・比較目的に推奨 |
+
+---
+
+### プリセット
+よく使う設定を名前をつけて保存できます。実験の再現性向上に役立ちます。
+""")
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────
 try:

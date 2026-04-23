@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="実験比較", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ 実験比較")
 st.caption("複数の実験結果を並べて学習曲線・PSNR・レンダリング画像を比較します")
@@ -236,6 +235,42 @@ else:
         display = [imgs[i * step] for i in range(n_show) if i * step < len(imgs)]
         for col, img in zip(cols, display):
             col.image(str(img), caption=img.name, use_container_width=True)
+
+# ── 使い方（詳細） ────────────────────────────────────────────────────────────
+with st.expander("📖 使い方（詳細）", expanded=False):
+    st.markdown("""
+### 実験比較の使い方
+
+1. 上部のマルチセレクトで比較したい実験を選択します（複数選択可）
+2. **学習曲線タブ**：PSNRとL1 Lossの推移を重ね書きで比較できます
+3. **レンダリング比較タブ**：同一シーンで学習した複数モデルのレンダリング結果を並べて確認できます
+
+---
+
+### グラフの見方
+
+| グラフ | 良い状態 |
+|---|---|
+| **PSNR** | 上に向かうほど良い。高いほど高品質 |
+| **L1 Loss** | 下に向かうほど良い。低いほど精度高 |
+
+- **train PSNR**：学習画像からの評価（過学習の参考）
+- **test PSNR**：未学習画像からの評価（`--eval` 有効時のみ表示）
+
+---
+
+### 比較のポイント
+
+- 同じシーンで異なるパラメータ（学習ステップ数・FPS・eval有無）を試すと有効です
+- ステップ数が多い実験ほど学習曲線が長く表示されます
+- PSNRが途中で飽和している場合はそれ以上学習しても改善が見込めません
+
+---
+
+### レンダリング比較
+- 「📷 結果確認」ページでレンダリング実行後に表示されます
+- 実験フォルダ内の `output/render/` に画像が保存されています
+""")
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────
 try:

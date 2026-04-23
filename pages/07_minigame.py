@@ -15,7 +15,6 @@ import streamlit as st
 
 from pipeline_widget import render_pipeline_status
 
-st.set_page_config(page_title="3DGS Laboratory", page_icon="⚗️", layout="wide")
 
 SAVE_FILE = "/workspace/tmp/minigame_save.json"
 COST_SCALE = 1.15   # 施設購入ごとのコスト増加率

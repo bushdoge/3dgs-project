@@ -3,10 +3,61 @@
 # ペアリスト生成方式: exhaustive（全ペア・4ステップ）または retrieval（類似画像のみ・5ステップ）
 
 import argparse
+import io
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, "/opt/hloc")
+
+
+class _TqdmFilter(io.TextIOBase):
+    """tqdmのプログレスバー行を間引いてログサイズを抑えるフィルタ。
+    連続するプログレスバー行は先頭2行・末尾1行のみ書き出し、中間は省略行に置き換える。
+    """
+    _PAT = re.compile(r"\d+%\|")
+
+    def __init__(self, stream, keep_first=2, keep_last=1):
+        self._stream  = stream
+        self._keep_first = keep_first
+        self._keep_last  = keep_last
+        self._buf = []
+
+    def _flush_buf(self):
+        if not self._buf:
+            return
+        lines = self._buf
+        out = lines[:self._keep_first]
+        omitted = len(lines) - self._keep_first - self._keep_last
+        if omitted > 0:
+            out.append(f"  ... （中間 {omitted} 行省略）\n")
+        if len(lines) > self._keep_first:
+            out.extend(lines[-self._keep_last:])
+        for l in out:
+            self._stream.write(l)
+        self._stream.flush()
+        self._buf = []
+
+    def write(self, s):
+        for line in s.splitlines(keepends=True):
+            clean = line.replace("\r", "")
+            if not clean.endswith("\n"):
+                clean += "\n"
+            if self._PAT.search(clean):
+                self._buf.append(clean)
+            else:
+                self._flush_buf()
+                self._stream.write(clean)
+        return len(s)
+
+    def flush(self):
+        self._flush_buf()
+        self._stream.flush()
+
+
+# stdout/stderr 両方にフィルタを適用（ログファイルへの書き出し量を削減）
+sys.stdout = _TqdmFilter(sys.stdout)
+sys.stderr = _TqdmFilter(sys.stderr)
 
 from hloc import (
     extract_features, match_features,

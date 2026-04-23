@@ -10,7 +10,6 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image, ImageDraw
 
-st.set_page_config(page_title="ガウスくん", page_icon="🐾", layout="wide")
 
 SAVE_FILE           = Path("/workspace/tmp/pet_save.json")
 PIPELINE_STATE_FILE = Path("/workspace/tmp/pipeline_state.json")

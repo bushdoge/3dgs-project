@@ -17,12 +17,6 @@ import pandas as pd
 
 from pipeline_widget import render_pipeline_status
 
-st.set_page_config(
-    page_title="System Monitor",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
 
 # ── カラーパレット ────────────────────────────────────────────────────────────
 C_GPU  = "#00e5ff"

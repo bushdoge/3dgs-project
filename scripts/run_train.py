@@ -19,6 +19,8 @@ def main():
                         default=[7000, 30000], help="チェックポイント保存タイミング")
     parser.add_argument("--test_iterations", nargs="+", type=int,
                         default=[7000, 30000], help="評価（PSNR計算）タイミング")
+    parser.add_argument("--eval", action="store_true",
+                        help="train/test分割を有効化（8枚に1枚をtestに割り当て）")
     args = parser.parse_args()
 
     Path(args.model_path).mkdir(parents=True, exist_ok=True)
@@ -31,6 +33,8 @@ def main():
         "--save_iterations", *[str(i) for i in args.save_iterations],
         "--test_iterations", *[str(i) for i in args.test_iterations],
     ]
+    if args.eval:
+        cmd.append("--eval")
 
     print(f"実行コマンド: {' '.join(cmd)}", flush=True)
     result = subprocess.run(cmd)

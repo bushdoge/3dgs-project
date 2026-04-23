@@ -11,7 +11,6 @@ import streamlit as st
 sys.path.insert(0, "/opt/gaussian-splatting")
 from scene.colmap_loader import read_extrinsics_binary, read_points3D_binary, qvec2rotmat
 
-st.set_page_config(page_title="姿勢推定", page_icon="📷", layout="wide")
 
 st.title("📷 姿勢推定（COLMAP / HLoc）")
 st.caption("フレーム画像からカメラ姿勢を推定します（Structure from Motion）")
@@ -58,8 +57,8 @@ st.subheader("バックエンド設定")
 # プリセット定義
 PRESETS = [
     ("COLMAP\n（標準）",           False, None,              None),
-    ("SuperPoint\n+ LightGlue",   True,  "superpoint_max",  "superpoint+lightglue"),
-    ("SuperPoint\n+ SuperGlue",   True,  "superpoint_max",  "superglue"),
+    ("SuperPoint\n+ LightGlue",   True,  "superpoint_aachen",  "superpoint+lightglue"),
+    ("SuperPoint\n+ SuperGlue",   True,  "superpoint_aachen",  "superglue"),
     ("DISK\n+ LightGlue",         True,  "disk",            "disk+lightglue"),
     ("ALIKED\n+ LightGlue",       True,  "aliked-n16",      "aliked+lightglue"),
     ("SIFT\n+ NN",                True,  "sift",            "NN-ratio"),
@@ -334,6 +333,70 @@ if source_path:
 
         except Exception as e:
             st.warning(f"可視化に失敗しました: {e}")
+
+# ── 使い方（詳細） ────────────────────────────────────────────────────────────
+st.divider()
+with st.expander("📖 使い方（詳細）", expanded=False):
+    st.markdown("""
+### バックエンドの選び方
+
+| バックエンド | 特徴 | 向いているシーン |
+|---|---|---|
+| **COLMAP（標準）** | SIFTによる古典的手法。軽量・安定。 | 枚数が少ない・動作確認したいとき |
+| **HLoc** | 深層学習ベースの特徴点＋マッチング。再構成精度が高い。 | 本番運用・大規模シーン |
+
+---
+
+### 特徴点抽出器（HLoc使用時）
+
+| 名前 | キーポイント数 | 速度 | 特徴 |
+|---|---|---|---|
+| **superpoint_aachen** ★推奨 | 1024 | 速い | 汎用・屋外向け・速度と精度のバランスが良い |
+| **superpoint_max** | 4096 | 遅い | 最高精度。枚数が少ないときや精度最優先のとき |
+| **disk** | 可変 | 普通 | 繰り返しパターン（タイル・床など）に強い |
+| **aliked-n16** | 可変 | 速い | 軽量・省メモリ。手軽に試したいとき |
+| **sift** | 可変 | 速い | 古典的特徴量。HLoc経由でCOLMAP互換マッチャーと組み合わせる |
+| **r2d2** | 可変 | 普通 | 信頼度付き特徴点。照明変化や昼夜差に強い |
+| **d2net-ss** | 密 | 遅い | 低テクスチャ・繰り返し面に強い。処理が重い |
+
+> 迷ったら **superpoint_aachen**。精度を上げたいなら **superpoint_max**（処理時間に注意）。
+
+---
+
+### マッチャー（HLoc使用時）
+
+| 名前 | 速度 | 精度 | 特徴 |
+|---|---|---|---|
+| **superpoint+lightglue** ★推奨 | 速い | 高い | SuperPoint特徴との相性が最も良い |
+| **disk+lightglue** | 速い | 高い | DISK特徴専用 |
+| **aliked+lightglue** | 速い | 普通 | ALIKED特徴専用 |
+| **superglue** | 遅い | 非常に高い | Transformer型。精度最優先のとき |
+| **superglue-fast** | 普通 | 高い | SuperGlueの軽量版 |
+| **NN-ratio** | 非常に速い | 普通 | Lowe比率テスト付き最近傍。汎用 |
+| **adalam** | 速い | 高い | 幾何検証付き最近傍。誤対応に強い |
+
+---
+
+### ペアリスト生成方式（HLoc使用時）
+
+| 方式 | 速度 | 説明 |
+|---|---|---|
+| **Exhaustive** | 遅い（O(n²)） | 全ペア総当たり。〜300枚向け |
+| **Retrieval** | 速い | 類似画像のみマッチング。大量枚数でも現実的な時間で完了 |
+
+**top-K の目安**：〜500枚→20〜30、500〜2000枚→15〜20、2000枚以上→10〜15
+
+---
+
+### 処理時間の目安（RTX A6000）
+
+| 枚数 | Exhaustive | Retrieval top-20 |
+|---|---|---|
+| 200枚 | 数分 | 数分 |
+| 1000枚 | 1〜2時間 | 20〜40分 |
+| 5000枚 | 数十時間 | 3〜6時間 |
+| 12000枚 | 現実的でない | 15〜25時間 |
+""")
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────
 try:

@@ -10,7 +10,6 @@ from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="3DGS学習実行", page_icon="🧠", layout="wide")
 
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
 if "train_proc" not in st.session_state:
@@ -207,6 +206,17 @@ with col3:
         help="PSNR等の評価を行うステップ数",
     )
 
+# ── 評価設定 ──────────────────────────────────────────────────────────────────
+use_eval = st.checkbox(
+    "train/test 分割を有効にする（--eval）",
+    value=False,
+    help="ONにすると8枚に1枚をtestデータとして学習から除外し、未学習視点でPSNRを評価します。研究・比較目的に推奨。",
+)
+if use_eval:
+    st.caption("📊 testデータ: 入力画像の約12.5%（8枚に1枚）が自動で割り当てられます。学習には残り87.5%が使われます。")
+else:
+    st.caption("📊 全フレームを学習に使用します。test PSNRは計算されません。")
+
 # ── 出力設定 ──────────────────────────────────────────────────────────────────
 st.subheader("出力設定")
 
@@ -229,6 +239,8 @@ if save_list:
     cmd_parts.append("--save_iterations " + " ".join(save_list))
 if test_list:
     cmd_parts.append("--test_iterations " + " ".join(test_list))
+if use_eval:
+    cmd_parts.append("--eval")
 
 st.code(" \\\n  ".join(cmd_parts), language="bash")
 
@@ -257,6 +269,8 @@ if st.button("▶ 学習を開始", type="primary",
             run_args += ["--save_iterations"] + save_list
         if test_list:
             run_args += ["--test_iterations"] + test_list
+        if use_eval:
+            run_args.append("--eval")
 
         log_file = open(log_path, "w")
         proc = subprocess.Popen(
@@ -272,6 +286,37 @@ if st.button("▶ 学習を開始", type="primary",
         st.session_state.train_iterations = iterations
 
         st.rerun()
+
+# ── 使い方（詳細） ────────────────────────────────────────────────────────────
+with st.expander("📖 使い方（詳細）", expanded=False):
+    st.markdown("""
+### 学習ステップ数（iterations）
+
+| ステップ数 | 時間目安 | 用途 |
+|---|---|---|
+| 7,000 | 約5〜10分 | クイック確認・プリセット調整 |
+| 30,000 | 約30〜60分 | 標準品質（デフォルト） |
+| 100,000 | 約2〜4時間 | 高品質・論文品質 |
+
+### 保存タイミング / 評価タイミング
+- **保存タイミング（save_iterations）**：チェックポイントを保存するステップ。複数指定可能（カンマ区切り）。
+- **評価タイミング（test_iterations）**：PSNR・L1 Lossを評価するステップ。`--eval` が有効な場合のみtestデータで評価されます。
+
+### train/test 分割（--eval）
+- ONにすると入力画像の **8枚に1枚**（約12.5%）をtestデータとして自動割り当てします。
+- 学習には残り **87.5%** が使われます。
+- testデータは学習に使用されないため、未学習視点でのPSNRを客観的に評価できます。
+- **研究・比較目的に推奨**。手元確認のみなら不要です。
+
+### モデル出力フォルダ
+- デフォルトは実験フォルダ内の `output/` サブフォルダです。
+- 変更も可能ですが、特別な理由がない限りデフォルトのままを推奨します。
+- 出力フォルダには `point_cloud/`、`cameras.json`、`cfg_args` などが生成されます。
+
+### 実行後
+- 学習が完了したら「📷 結果確認」ページで点群・PSNRグラフ・レンダリングを確認できます。
+- 実験設定・ログは「🗂️ 実験管理」ページで閲覧・メモ編集できます。
+""")
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────
 try:
