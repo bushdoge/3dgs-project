@@ -390,70 +390,6 @@ if log_files:
 else:
     st.info("ログファイルが見つかりません。")
 
-# ── 元画像 vs レンダリング 比較ビュー ─────────────────────────────────────────
-st.divider()
-st.subheader("🔍 元画像 vs レンダリング 比較")
-st.caption("gaussian-splatting の render.py が出力した gt/（元画像）と renders/（再現画像）を並べて表示します")
-
-_compare_splits = []
-if has_output:
-    for _split in ["test", "train"]:
-        _sdir = exp_path / "output" / _split
-        if _sdir.exists():
-            for _idir in sorted(_sdir.iterdir()):
-                if (_idir / "renders").exists() and (_idir / "gt").exists():
-                    _compare_splits.append((_split, _idir.name))
-
-if not _compare_splits:
-    st.info("比較データが見つかりません。先にレンダリングを実行してください（gt/ と renders/ が必要です）。")
-else:
-    _split_labels = {
-        "test":  "🧪 test（未学習視点）",
-        "train": "🎓 train（学習視点）",
-    }
-    _cmp_options  = [f"{s}/{i}" for s, i in _compare_splits]
-    _cmp_labels   = [f"{_split_labels.get(s, s)} / {i.replace('ours_', 'iter ')}" for s, i in _compare_splits]
-    _cmp_sel      = st.selectbox("split / iteration を選択", _cmp_options,
-                                  format_func=lambda x: _cmp_labels[_cmp_options.index(x)])
-    _sel_split, _sel_iter = _cmp_sel.split("/", 1)
-
-    _renders_dir = exp_path / "output" / _sel_split / _sel_iter / "renders"
-    _gt_dir      = exp_path / "output" / _sel_split / _sel_iter / "gt"
-
-    _render_imgs = sorted(
-        list(_renders_dir.glob("*.png")) + list(_renders_dir.glob("*.jpg"))
-    )
-
-    if not _render_imgs:
-        st.info("レンダリング画像が見つかりません。")
-    else:
-        _n_total = len(_render_imgs)
-        _cmp_col1, _cmp_col2 = st.columns([3, 1])
-        with _cmp_col1:
-            _n_per_page = st.slider("1ページあたりの表示枚数", 1, 10, 4, key="cmp_per_page")
-        with _cmp_col2:
-            _n_pages = max(1, (_n_total + _n_per_page - 1) // _n_per_page)
-            _page    = st.number_input("ページ", min_value=1, max_value=_n_pages,
-                                       value=1, key="cmp_page")
-
-        _start = (_page - 1) * _n_per_page
-        _end   = min(_start + _n_per_page, _n_total)
-        st.caption(f"全 {_n_total} 枚中 {_start + 1}〜{_end} 枚を表示")
-
-        for _img_path in _render_imgs[_start:_end]:
-            _gt_path = _gt_dir / _img_path.name
-            _c1, _c2 = st.columns(2)
-            with _c1:
-                if _gt_path.exists():
-                    st.image(str(_gt_path), caption=f"元画像　{_img_path.name}",
-                             use_container_width=True)
-                else:
-                    st.warning(f"gt が見つかりません: {_img_path.name}")
-            with _c2:
-                st.image(str(_img_path), caption=f"レンダリング　{_img_path.name}",
-                         use_container_width=True)
-
-
 # ── レンダリング画像 ──────────────────────────────────────────────────────────
 st.divider()
 st.subheader("🖼️ レンダリング画像")
@@ -468,51 +404,133 @@ for rd in render_dirs:
     if rd.is_dir():
         images += sorted(rd.rglob("*.png")) + sorted(rd.rglob("*.jpg"))
 
-if images:
-    # ── 動画ビューア ──────────────────────────────────────────────────────────
-    tab_video, tab_grid = st.tabs(["▶ 動画再生", "🖼️ 画像一覧"])
+# gt/ が存在する split/iteration を収集（比較タブ用）
+_compare_splits = []
+if has_output:
+    for _split in ["test", "train"]:
+        _sdir = exp_path / "output" / _split
+        if _sdir.exists():
+            for _idir in sorted(_sdir.iterdir()):
+                if (_idir / "renders").exists() and (_idir / "gt").exists():
+                    _compare_splits.append((_split, _idir.name))
 
-    with tab_video:
-        video_path = Path("/workspace/tmp") / f"render_{exp_path.name}.mp4"
-        col_v1, col_v2, col_v3 = st.columns(3)
-        fps_v = col_v1.number_input("再生FPS", min_value=1, max_value=60, value=10)
-        max_frames = col_v2.number_input("最大フレーム数", min_value=10, max_value=1000,
-                                         value=min(300, len(images)))
-        if col_v3.button("🎬 動画を生成", use_container_width=True):
-            import tempfile, shutil
-            tmp_dir = Path(tempfile.mkdtemp())
-            use_imgs = images[:max_frames]
-            for i, img in enumerate(use_imgs):
-                shutil.copy(img, tmp_dir / f"frame_{i:06d}{img.suffix}")
-            result_v = subprocess.run([
-                "ffmpeg", "-y", "-framerate", str(fps_v),
-                "-i", str(tmp_dir / f"frame_%06d{use_imgs[0].suffix}"),
-                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video_path),
-            ], capture_output=True)
-            shutil.rmtree(tmp_dir)
-            if result_v.returncode == 0:
-                st.success(f"{len(use_imgs)} フレームから動画を生成しました。")
-            else:
-                st.error("動画生成に失敗しました。")
-
-        if video_path.exists():
-            st.video(str(video_path))
-            st.caption(f"保存先: `{video_path}`")
-        else:
-            st.info("「動画を生成」ボタンを押すとここに再生ビューアが表示されます。")
-
-    with tab_grid:
-        cols_per_row = st.slider("1行あたりの表示枚数", 2, 6, 4)
-        for i in range(0, min(len(images), 24), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(images):
-                    col.image(str(images[i + j]),
-                              caption=images[i + j].name,
-                              use_container_width=True)
-else:
+if not images and not _compare_splits:
     st.info("レンダリング画像が見つかりません。render.py を実行すると生成されます。")
+else:
+    _tab_labels = ["▶ 動画再生", "🖼️ 画像一覧"]
+    if _compare_splits:
+        _tab_labels.append("🔍 元画像 vs レンダリング")
+    _tabs = st.tabs(_tab_labels)
+
+    # ── 動画再生タブ ──────────────────────────────────────────────────────────
+    with _tabs[0]:
+        if not images:
+            st.info("レンダリング画像が見つかりません。")
+        else:
+            video_path = Path("/workspace/tmp") / f"render_{exp_path.name}.mp4"
+            col_v1, col_v2, col_v3 = st.columns(3)
+            fps_v      = col_v1.number_input("再生FPS", min_value=1, max_value=60, value=10)
+            max_frames = col_v2.number_input("最大フレーム数", min_value=10, max_value=1000,
+                                             value=min(300, len(images)))
+            if col_v3.button("🎬 動画を生成", use_container_width=True):
+                import tempfile, shutil
+                tmp_dir  = Path(tempfile.mkdtemp())
+                use_imgs = images[:max_frames]
+                for i, img in enumerate(use_imgs):
+                    shutil.copy(img, tmp_dir / f"frame_{i:06d}{img.suffix}")
+                result_v = subprocess.run([
+                    "ffmpeg", "-y", "-framerate", str(fps_v),
+                    "-i", str(tmp_dir / f"frame_%06d{use_imgs[0].suffix}"),
+                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video_path),
+                ], capture_output=True)
+                shutil.rmtree(tmp_dir)
+                if result_v.returncode == 0:
+                    st.success(f"{len(use_imgs)} フレームから動画を生成しました。")
+                else:
+                    st.error("動画生成に失敗しました。")
+
+            if video_path.exists():
+                # 動画は幅60%に抑える
+                _, vid_col, _ = st.columns([1, 3, 1])
+                with vid_col:
+                    st.video(str(video_path))
+                st.caption(f"保存先: `{video_path}`")
+            else:
+                st.info("「動画を生成」ボタンを押すとここに再生ビューアが表示されます。")
+
+    # ── 画像一覧タブ ──────────────────────────────────────────────────────────
+    with _tabs[1]:
+        if not images:
+            st.info("レンダリング画像が見つかりません。")
+        else:
+            cols_per_row = st.slider("1行あたりの表示枚数", 3, 8, 6, key="grid_cols")
+            for i in range(0, min(len(images), 48), cols_per_row):
+                cols = st.columns(cols_per_row)
+                for j, col in enumerate(cols):
+                    if i + j < len(images):
+                        col.image(str(images[i + j]),
+                                  caption=images[i + j].name,
+                                  use_container_width=True)
+
+    # ── 比較タブ（gt/ がある場合のみ） ───────────────────────────────────────
+    if _compare_splits:
+        with _tabs[2]:
+            _split_labels = {
+                "test":  "🧪 test（未学習視点）",
+                "train": "🎓 train（学習視点）",
+            }
+            _cmp_options = [f"{s}/{i}" for s, i in _compare_splits]
+            _cmp_labels  = [
+                f"{_split_labels.get(s, s)} / {i.replace('ours_', 'iter ')}"
+                for s, i in _compare_splits
+            ]
+            _cmp_ctrl1, _cmp_ctrl2, _cmp_ctrl3 = st.columns(3)
+            with _cmp_ctrl1:
+                _cmp_sel = st.selectbox(
+                    "split / iteration",
+                    _cmp_options,
+                    format_func=lambda x: _cmp_labels[_cmp_options.index(x)],
+                )
+            _sel_split, _sel_iter = _cmp_sel.split("/", 1)
+            _renders_dir = exp_path / "output" / _sel_split / _sel_iter / "renders"
+            _gt_dir      = exp_path / "output" / _sel_split / _sel_iter / "gt"
+            _render_imgs = sorted(
+                list(_renders_dir.glob("*.png")) + list(_renders_dir.glob("*.jpg"))
+            )
+
+            if not _render_imgs:
+                st.info("レンダリング画像が見つかりません。")
+            else:
+                with _cmp_ctrl2:
+                    _pairs_per_row = st.slider("1行あたりのペア数", 1, 3, 2, key="cmp_pairs")
+                with _cmp_ctrl3:
+                    _n_pages = max(1, (len(_render_imgs) + _pairs_per_row - 1) // _pairs_per_row)
+                    _page    = st.number_input("ページ", min_value=1, max_value=_n_pages,
+                                               value=1, key="cmp_page")
+
+                _start = (_page - 1) * _pairs_per_row
+                _end   = min(_start + _pairs_per_row, len(_render_imgs))
+                st.caption(
+                    f"全 {len(_render_imgs)} 枚中 {_start + 1}〜{_end} 枚　"
+                    f"| 左: 元画像（gt）　右: レンダリング"
+                )
+
+                # 1行に _pairs_per_row ペア（= _pairs_per_row×2 列）
+                _row_cols = st.columns(_pairs_per_row * 2)
+                for _idx, _img_path in enumerate(_render_imgs[_start:_end]):
+                    _gt_path = _gt_dir / _img_path.name
+                    _col_gt  = _row_cols[_idx * 2]
+                    _col_rd  = _row_cols[_idx * 2 + 1]
+                    if _gt_path.exists():
+                        _col_gt.image(str(_gt_path),
+                                      caption=f"元画像 {_img_path.name}",
+                                      use_container_width=True)
+                    else:
+                        _col_gt.warning("gt なし")
+                    _col_rd.image(str(_img_path),
+                                  caption=f"レンダリング {_img_path.name}",
+                                  use_container_width=True)
 
 # ── メモ（note.md） ───────────────────────────────────────────────────────────
 st.divider()
