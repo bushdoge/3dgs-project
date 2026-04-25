@@ -311,22 +311,23 @@ st.markdown(
 # ── コントロール ──────────────────────────────────────────────────────────────
 cc1, cc2, cc3, _ = st.columns([1, 1, 1, 5])
 with cc1:
-    refresh_rate = st.selectbox("Refresh", [1, 2, 5, 10], index=1,
+    refresh_rate = st.selectbox("Refresh", [1, 2, 5, 10], index=2,
                                 label_visibility="collapsed")
 with cc2:
     auto = st.toggle("Auto", value=True)
 with cc3:
-    show_graph = st.toggle("Graph", value=True)
+    show_graph = st.toggle("Graph", value=False)
 
 placeholder = st.empty()
 
-# ═════════════════════════════════════════════════════════════════════════════
-while True:
-    gpus, gpu_err  = parse_nvidia_smi()
-    procs = parse_processes()
-    cpu   = parse_cpu()
-    mem   = parse_memory()
-    now   = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+# ─── データ収集 ───────────────────────────────────────────────────────────────
+gpus, gpu_err = parse_nvidia_smi()
+procs = parse_processes()
+cpu   = parse_cpu()
+mem   = parse_memory()
+now   = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+
+if True:
 
     # 履歴更新
     for gpu in gpus:
@@ -530,13 +531,12 @@ while True:
             unsafe_allow_html=True,
         )
 
-    if not auto:
-        break
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass
 
-    try:
-        from pipeline_widget import render_sticky_footer
-        render_sticky_footer()
-    except Exception:
-        pass
-
+if auto:
     time.sleep(refresh_rate)
+    st.rerun()
