@@ -127,9 +127,12 @@ def _start_betting_round():
     st.session_state.tx_c_acted = False
 
 def _round_over():
-    return (st.session_state.tx_p_bet_r == st.session_state.tx_c_bet_r
-            and st.session_state.tx_p_acted
-            and st.session_state.tx_c_acted)
+    if not (st.session_state.tx_p_acted and st.session_state.tx_c_acted):
+        return False
+    if st.session_state.tx_p_bet_r == st.session_state.tx_c_bet_r:
+        return True
+    # どちらかがオールイン（チップ0）でベット額が揃わない場合も終了
+    return st.session_state.tx_pchips == 0 or st.session_state.tx_cchips == 0
 
 # ─── フェーズ進行 ──────────────────────────────────────────────────────────────
 
@@ -183,7 +186,7 @@ def _hand_str(hand):
 # ─── CPU アクション ────────────────────────────────────────────────────────────
 
 def _cpu_act():
-    to_call = st.session_state.tx_p_bet_r - st.session_state.tx_c_bet_r
+    to_call = max(0, st.session_state.tx_p_bet_r - st.session_state.tx_c_bet_r)
     action, extra = cpu_decide(
         st.session_state.tx_chand,
         st.session_state.tx_community,
@@ -488,7 +491,8 @@ else:
         with ac4:
             st.button("💥 オールイン", use_container_width=True,
                       on_click=player_action, args=("allin",),
-                      type="primary" if pchips <= to_call else "secondary")
+                      type="primary" if pchips <= to_call else "secondary",
+                      disabled=(pchips <= 0))
 
         st.button("🏳 フォールド", use_container_width=False,
                   on_click=player_action, args=("fold",))
