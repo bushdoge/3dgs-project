@@ -108,6 +108,9 @@ if "pipeline" not in st.session_state:
 
 pl = st.session_state.pipeline
 
+if "pl_selected_test_iters" not in st.session_state:
+    st.session_state["pl_selected_test_iters"] = {1000, 3000, 7000, 15000, 30000}
+
 
 def step_badge(name, status):
     colors = {
@@ -570,8 +573,8 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
                 st.session_state["pl_iterations"]      = int(p.get("iterations", 30000))
                 save_iters_loaded = p.get("save_iterations", [7000, 30000])
                 test_iters_loaded = p.get("test_iterations", [7000, 30000])
-                st.session_state["pl_save_iters_str"]  = ",".join(str(i) for i in save_iters_loaded)
-                st.session_state["pl_test_iters_str"]  = ",".join(str(i) for i in test_iters_loaded)
+                st.session_state["pl_save_iters_str"]      = ",".join(str(i) for i in save_iters_loaded)
+                st.session_state["pl_selected_test_iters"] = set(test_iters_loaded)
                 st.session_state["pl_use_eval"]        = bool(p.get("eval", False))
                 st.toast(f"プリセット「{sel_preset}」を読み込みました。")
                 st.rerun()
@@ -604,8 +607,8 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
         if st.button("💾 保存", use_container_width=True, key="save_preset_btn"):
             name = new_preset_name.strip()
             if name:
-                _si = st.session_state.get("pl_save_iters_str", "7000,30000")
-                _ti = st.session_state.get("pl_test_iters_str", "7000,30000")
+                _si      = st.session_state.get("pl_save_iters_str", "7000,30000")
+                _sel_ti  = st.session_state.get("pl_selected_test_iters", {7000, 30000})
                 cur = {
                     "use_hloc":        st.session_state.get("pl_use_hloc", False),
                     "feature_type":    st.session_state.get("pl_feature", "superpoint_max"),
@@ -617,7 +620,7 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
                     "use_gpu":         bool(st.session_state.get("pl_use_gpu", True)),
                     "iterations":      int(st.session_state.get("pl_iterations", 30000)),
                     "save_iterations": [int(s.strip()) for s in _si.split(",") if s.strip().isdigit()],
-                    "test_iterations": [int(s.strip()) for s in _ti.split(",") if s.strip().isdigit()],
+                    "test_iterations": sorted(_sel_ti),
                 }
                 presets[name] = cur
                 save_presets(presets)
@@ -740,23 +743,49 @@ else:
 
 st.subheader("⚙️ 学習（Step 3）設定")
 
-col6, col7, col8 = st.columns(3)
+col6, col7 = st.columns(2)
 with col6:
     iterations = st.number_input("学習ステップ数", min_value=1000, max_value=100000,
                                  value=int(st.session_state.get("pl_iterations", 30000)),
                                  step=1000)
     st.session_state["pl_iterations"] = iterations
 with col7:
-    save_iters_str = st.text_input("保存タイミング",
+    save_iters_str = st.text_input("保存タイミング（カンマ区切り）",
                                    value=st.session_state.get("pl_save_iters_str", "7000,30000"))
     st.session_state["pl_save_iters_str"] = save_iters_str
-with col8:
-    test_iters_str = st.text_input("評価タイミング",
-                                   value=st.session_state.get("pl_test_iters_str", "7000,30000"))
-    st.session_state["pl_test_iters_str"] = test_iters_str
+
+st.markdown("**評価タイミング（ボタンで選択 / 解除）**")
+st.caption("クリックで切り替え。青 = 選択中。学習ステップ数を超えるボタンは表示されません。")
+
+def _pl_toggle_test_iter(i):
+    if i in st.session_state["pl_selected_test_iters"]:
+        st.session_state["pl_selected_test_iters"].discard(i)
+    else:
+        st.session_state["pl_selected_test_iters"].add(i)
+
+_PL_COLS_PER_ROW = 10
+_pl_max_iter  = int(iterations)
+_pl_all_iters = list(range(1000, _pl_max_iter + 1, 1000))
+
+for _pl_row_start in range(0, len(_pl_all_iters), _PL_COLS_PER_ROW):
+    _pl_row_iters = _pl_all_iters[_pl_row_start:_pl_row_start + _PL_COLS_PER_ROW]
+    _pl_cols = st.columns(_PL_COLS_PER_ROW)
+    for _pl_idx, _pl_i in enumerate(_pl_row_iters):
+        _pl_sel = _pl_i in st.session_state["pl_selected_test_iters"]
+        _pl_cols[_pl_idx].button(
+            f"{_pl_i // 1000}k",
+            key=f"pl_test_iter_btn_{_pl_i}",
+            type="primary" if _pl_sel else "secondary",
+            on_click=_pl_toggle_test_iter,
+            args=(_pl_i,),
+            use_container_width=True,
+        )
+
+_pl_sel_display = sorted(i for i in st.session_state["pl_selected_test_iters"] if i <= _pl_max_iter)
+st.caption(f"選択中: {', '.join(str(i) for i in _pl_sel_display) if _pl_sel_display else '（なし）'}")
 
 save_iters = [int(s.strip()) for s in save_iters_str.split(",") if s.strip().isdigit()]
-test_iters = [int(s.strip()) for s in test_iters_str.split(",") if s.strip().isdigit()]
+test_iters = sorted(i for i in st.session_state["pl_selected_test_iters"] if i <= int(iterations))
 
 use_eval = st.checkbox(
     "train/test 分割を有効にする（--eval）",
@@ -903,12 +932,22 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 | パラメータ | 説明 | 目安 |
 |---|---|---|
 | 学習ステップ数 | 多いほど高品質・長時間 | 確認7k、標準30k、高品質100k |
+| 保存タイミング | カンマ区切りで指定。そのステップのモデルをディスクに保存 | `7000,30000` |
+| 評価タイミング | 1000刻みのボタンで選択。PSNR等のスコアを計算してグラフ化 | 好きなステップを複数選択 |
 | train/test 分割（--eval） | 8枚に1枚をtest用に確保、未学習視点でPSNR評価 | 研究・比較目的に推奨 |
 
 ---
 
+### 評価タイミング（test_iterations）とは
+- PSNR・SSIM・LPIPS のスコアを計算してログに記録するタイミングです
+- モデルの保存はしないのでストレージを圧迫しません
+- 点を多く選ぶほど学習曲線グラフが滑らかになります
+- 学習ステップ数を超えるボタンは自動で非表示になります
+
+---
+
 ### プリセット
-よく使う設定を名前をつけて保存できます。実験の再現性向上に役立ちます。
+よく使う設定を名前をつけて保存できます。評価タイミングの選択状態もプリセットに含まれます。
 """)
 
 # ── 固定フッター ──────────────────────────────────────────────────────────────

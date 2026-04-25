@@ -23,10 +23,17 @@ def main():
                         help="背景を白にする（デフォルト: 黒）")
     args = parser.parse_args()
 
+    # 学習時に undistortion が行われた場合は dense/ を自動的に使用する
+    source = Path(args.source_path)
+    dense = source / "dense"
+    if dense.exists():
+        print(f"[RUN_RENDER] dense/ を検出 → ソースパスを {dense} に切り替えます", flush=True)
+        source = dense
+
     cmd = [
         sys.executable, "/opt/gaussian-splatting/render.py",
         "-m", args.model_path,
-        "-s", args.source_path,
+        "-s", str(source),
         "--iteration", str(args.iteration),
         "--quiet",
     ]
@@ -36,7 +43,7 @@ def main():
 
     print(f"[RUN_RENDER] コマンド: {' '.join(cmd)}", flush=True)
     print(f"[RUN_RENDER] モデル  : {args.model_path}", flush=True)
-    print(f"[RUN_RENDER] ソース  : {args.source_path}", flush=True)
+    print(f"[RUN_RENDER] ソース  : {source}", flush=True)
     print(f"[RUN_RENDER] iter   : {args.iteration if args.iteration >= 0 else '最新'}", flush=True)
 
     result = subprocess.run(cmd, check=False)
