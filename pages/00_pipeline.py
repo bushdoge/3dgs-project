@@ -442,8 +442,8 @@ if pl["active"]:
 
         # ログ表示
         if pl["log_path"]:
-            log_tail = get_log_tail(pl["log_path"], 20)
-            st.text_area("最新ログ", log_tail, height=420, label_visibility="visible")
+            log_tail = get_log_tail(pl["log_path"], 15)
+            st.text_area("最新ログ", log_tail, height=320, label_visibility="visible")
 
         # 中断ボタン
         if st.button("⏹ パイプラインを中断"):
