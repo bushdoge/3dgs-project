@@ -154,7 +154,7 @@ def main():
     parser.add_argument("--save_iterations", nargs="+", type=int,
                         default=[7000, 30000], help="チェックポイント保存タイミング")
     parser.add_argument("--test_iterations", nargs="+", type=int,
-                        default=[7000, 30000], help="評価（PSNR計算）タイミング")
+                        default=[1000, 3000, 7000, 15000, 30000], help="評価（PSNR計算）タイミング")
     parser.add_argument("--eval", action="store_true",
                         help="train/test分割を有効化（8枚に1枚をtestに割り当て）")
     parser.add_argument("--resolution", "-r", type=int, default=None,

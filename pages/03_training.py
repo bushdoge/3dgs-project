@@ -13,11 +13,14 @@ import streamlit as st
 
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
 if "train_proc" not in st.session_state:
-    st.session_state.train_proc = None       # Popen オブジェクト
-    st.session_state.train_log_path = None   # ログファイルパス
-    st.session_state.train_model_path = None # モデル出力先
-    st.session_state.train_source = None     # 実験ディレクトリ
+    st.session_state.train_proc = None
+    st.session_state.train_log_path = None
+    st.session_state.train_model_path = None
+    st.session_state.train_source = None
     st.session_state.train_iterations = 30000
+
+if "selected_test_iters" not in st.session_state:
+    st.session_state.selected_test_iters = {1000, 3000, 7000, 15000, 30000}
 
 
 def is_training():
@@ -184,7 +187,7 @@ else:
 # ── 学習パラメータ ────────────────────────────────────────────────────────────
 st.subheader("学習パラメータ")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     iterations = st.number_input(
@@ -199,11 +202,36 @@ with col2:
         help="指定ステップ数ごとにチェックポイントを保存します",
     )
 
-with col3:
-    test_iterations = st.text_input(
-        "評価タイミング（カンマ区切り）", value="7000,30000",
-        help="PSNR等の評価を行うステップ数",
-    )
+# ── 評価タイミング（ボタン選択） ───────────────────────────────────────────────
+st.markdown("**評価タイミング（ボタンで選択 / 解除）**")
+st.caption("クリックで切り替え。青 = 選択中。学習ステップ数を超えるボタンは表示されません。")
+
+def _toggle_test_iter(i):
+    if i in st.session_state.selected_test_iters:
+        st.session_state.selected_test_iters.discard(i)
+    else:
+        st.session_state.selected_test_iters.add(i)
+
+_COLS_PER_ROW = 10
+_max_iter = int(iterations)
+_all_iters = list(range(1000, _max_iter + 1, 1000))
+
+for _row_start in range(0, len(_all_iters), _COLS_PER_ROW):
+    _row_iters = _all_iters[_row_start:_row_start + _COLS_PER_ROW]
+    _cols = st.columns(_COLS_PER_ROW)
+    for _idx, _i in enumerate(_row_iters):
+        _selected = _i in st.session_state.selected_test_iters
+        _cols[_idx].button(
+            f"{_i // 1000}k",
+            key=f"test_iter_btn_{_i}",
+            type="primary" if _selected else "secondary",
+            on_click=_toggle_test_iter,
+            args=(_i,),
+            use_container_width=True,
+        )
+
+_selected_display = sorted(i for i in st.session_state.selected_test_iters if i <= _max_iter)
+st.caption(f"選択中: {', '.join(str(i) for i in _selected_display) if _selected_display else '（なし）'}")
 
 # ── 解像度設定 ────────────────────────────────────────────────────────────────
 st.subheader("解像度設定（OOM対策）")
@@ -246,7 +274,7 @@ model_path = st.text_input("モデル出力フォルダ", value=default_model)
 st.subheader("実行コマンド（プレビュー）")
 
 save_list = [s.strip() for s in save_iterations.split(",") if s.strip()]
-test_list = [t.strip() for t in test_iterations.split(",") if t.strip()]
+test_list = [str(i) for i in sorted(i for i in st.session_state.selected_test_iters if i <= int(iterations))]
 
 cmd_parts = [
     "python3 /workspace/scripts/run_train.py",

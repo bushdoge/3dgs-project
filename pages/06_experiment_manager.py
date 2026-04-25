@@ -201,22 +201,94 @@ with tab_logs:
 
 # ── 設定確認タブ ─────────────────────────────────────────────────────────────
 with tab_config:
+    import ast
+    import yaml
+
     config_path   = selected_exp / "config.yaml"
     cfg_args_list = list((selected_exp / "output").rglob("cfg_args")) \
                     if (selected_exp / "output").exists() else []
 
+    # cfg_args の Namespace(...) 文字列をパースして dict を返す
+    def _parse_namespace(text: str) -> dict:
+        text = text.strip()
+        if text.startswith("Namespace(") and text.endswith(")"):
+            text = text[len("Namespace("):-1]
+        result = {}
+        pattern = re.compile(
+            r"(\w+)="
+            r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|"
+            r"True|False|None|"
+            r"-?\d+\.\d+e[+-]?\d+|-?\d+\.\d+|-?\d+|"
+            r"\[[^\]]*\])"
+        )
+        for m in pattern.finditer(text):
+            key, val_str = m.group(1), m.group(2)
+            try:
+                result[key] = ast.literal_eval(val_str)
+            except Exception:
+                result[key] = val_str
+        return result
+
+    # cfg_args のキーを日本語ラベル・カテゴリに変換するマッピング
+    _CFG_LABELS = {
+        "source_path":      ("入力パス",           "パス"),
+        "model_path":       ("出力パス",           "パス"),
+        "images":           ("画像フォルダ名",      "パス"),
+        "depths":           ("深度フォルダ名",      "パス"),
+        "sh_degree":        ("SH次数",             "学習設定"),
+        "resolution":       ("解像度縮小倍率",      "学習設定"),
+        "white_background": ("白背景",             "学習設定"),
+        "eval":             ("--eval（train/test分割）",        "学習設定"),
+        "train_test_exp":   ("train_test_exp（独立実験モード）", "学習設定"),
+        "data_device":      ("データデバイス",      "その他"),
+    }
+
+    # ── config.yaml ──
     if config_path.exists():
-        st.markdown("**`config.yaml`**（実験設定）")
-        st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
+        st.markdown("#### `config.yaml`　実験設定")
+        try:
+            cfg_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if isinstance(cfg_data, dict):
+                cfg_rows = [{"設定項目": k, "値": str(v)} for k, v in cfg_data.items()]
+                st.dataframe(pd.DataFrame(cfg_rows), use_container_width=True, hide_index=True)
+            else:
+                st.code(config_path.read_text(encoding="utf-8"), language="yaml")
+        except Exception:
+            st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
+        with st.expander("生YAML", expanded=False):
+            st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
     else:
         st.info("config.yaml が見つかりません。")
 
+    # ── cfg_args ──
     if cfg_args_list:
-        st.markdown("**`cfg_args`**（gaussian-splatting 学習引数）")
+        st.markdown("#### `cfg_args`　学習引数（gaussian-splatting）")
         for cfg_file in cfg_args_list:
-            rel = cfg_file.relative_to(selected_exp)
-            with st.expander(str(rel), expanded=True):
-                st.code(cfg_file.read_text(errors="replace"), language="text")
+            raw = cfg_file.read_text(errors="replace").strip()
+            parsed = _parse_namespace(raw)
+            if parsed:
+                # カテゴリ別にグループ化
+                categories = {}
+                for key, val in parsed.items():
+                    label, cat = _CFG_LABELS.get(key, (key, "その他"))
+                    categories.setdefault(cat, []).append({"設定項目": label, "キー": key, "値": str(val)})
+
+                for cat_name in ["パス", "学習設定", "その他"]:
+                    if cat_name not in categories:
+                        continue
+                    st.caption(f"**{cat_name}**")
+                    st.dataframe(
+                        pd.DataFrame(categories[cat_name]),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "設定項目": st.column_config.TextColumn(width="medium"),
+                            "キー":     st.column_config.TextColumn(width="small"),
+                            "値":       st.column_config.TextColumn(width="large"),
+                        },
+                    )
+            with st.expander("生テキスト", expanded=False):
+                st.code(raw, language="text")
 
     if not config_path.exists() and not cfg_args_list:
         st.info("設定ファイルが見つかりません。パイプラインを実行すると config.yaml が生成されます。")

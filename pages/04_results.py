@@ -1,5 +1,6 @@
 # 3DGS学習結果（レンダリング実行・画像・ログ・ファイル構造）を確認するページ
 
+import ast
 import os
 import re
 import signal
@@ -8,7 +9,9 @@ import sys
 import time
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
+import yaml
 
 
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
@@ -366,7 +369,6 @@ if log_files:
         })
 
     if psnr_records:
-        import pandas as pd
         st.subheader("📈 PSNR推移")
         df = pd.DataFrame(psnr_records)
         pivot = df.pivot(index="iteration", columns="split", values="PSNR")
@@ -452,21 +454,90 @@ if st.button("💾 メモを保存"):
     note_path.write_text(new_note, encoding="utf-8")
     st.success("メモを保存しました。")
 
-# ── config.yaml ───────────────────────────────────────────────────────────────
+# ── config.yaml / cfg_args ────────────────────────────────────────────────────
 st.divider()
-st.subheader("⚙️ 実験設定（config.yaml）")
+st.subheader("⚙️ 実験設定")
+
+def _parse_namespace(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("Namespace(") and text.endswith(")"):
+        text = text[len("Namespace("):-1]
+    result = {}
+    pattern = re.compile(
+        r"(\w+)="
+        r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|"
+        r"True|False|None|"
+        r"-?\d+\.\d+e[+-]?\d+|-?\d+\.\d+|-?\d+|"
+        r"\[[^\]]*\])"
+    )
+    for m in pattern.finditer(text):
+        key, val_str = m.group(1), m.group(2)
+        try:
+            result[key] = ast.literal_eval(val_str)
+        except Exception:
+            result[key] = val_str
+    return result
+
+_CFG_LABELS = {
+    "source_path":      ("入力パス",                "パス"),
+    "model_path":       ("出力パス",                "パス"),
+    "images":           ("画像フォルダ名",           "パス"),
+    "depths":           ("深度フォルダ名",           "パス"),
+    "sh_degree":        ("SH次数",                  "学習設定"),
+    "resolution":       ("解像度縮小倍率",           "学習設定"),
+    "white_background": ("白背景",                  "学習設定"),
+    "eval":             ("--eval（train/test分割）",        "学習設定"),
+    "train_test_exp":   ("train_test_exp（独立実験モード）", "学習設定"),
+    "data_device":      ("データデバイス",           "その他"),
+}
 
 config_path = exp_path / "config.yaml"
+cfg_args_list = list((exp_path / "output").rglob("cfg_args")) if has_output else []
+
 if config_path.exists():
-    with open(config_path) as f:
-        st.code(f.read(), language="yaml")
-else:
-    # gaussian-splatting が生成する cfg_args も探す
-    cfg_args = list((exp_path / "output").rglob("cfg_args")) if has_output else []
-    if cfg_args:
-        st.code(cfg_args[0].read_text(), language="text")
-    else:
-        st.info("config ファイルが見つかりません。")
+    st.markdown("**`config.yaml`**")
+    try:
+        cfg_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        if isinstance(cfg_data, dict):
+            st.dataframe(
+                pd.DataFrame([{"設定項目": k, "値": str(v)} for k, v in cfg_data.items()]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.code(config_path.read_text(encoding="utf-8"), language="yaml")
+    except Exception:
+        st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
+    with st.expander("生YAML", expanded=False):
+        st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
+
+if cfg_args_list:
+    st.markdown("**`cfg_args`**　学習引数（gaussian-splatting）")
+    for cfg_file in cfg_args_list:
+        raw = cfg_file.read_text(errors="replace").strip()
+        parsed = _parse_namespace(raw)
+        if parsed:
+            categories: dict = {}
+            for key, val in parsed.items():
+                label, cat = _CFG_LABELS.get(key, (key, "その他"))
+                categories.setdefault(cat, []).append({"設定項目": label, "キー": key, "値": str(val)})
+            for cat_name in ["パス", "学習設定", "その他"]:
+                if cat_name not in categories:
+                    continue
+                st.caption(f"**{cat_name}**")
+                st.dataframe(
+                    pd.DataFrame(categories[cat_name]),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "設定項目": st.column_config.TextColumn(width="medium"),
+                        "キー":     st.column_config.TextColumn(width="small"),
+                        "値":       st.column_config.TextColumn(width="large"),
+                    },
+                )
+        with st.expander("生テキスト", expanded=False):
+            st.code(raw, language="text")
+
+if not config_path.exists() and not cfg_args_list:
+    st.info("config ファイルが見つかりません。")
 
 # ── 使い方（詳細） ────────────────────────────────────────────────────────────
 with st.expander("📖 使い方（詳細）", expanded=False):
