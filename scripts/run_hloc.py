@@ -1,8 +1,11 @@
 # HLoc（SuperPoint/DISK/SIFT + LightGlue/SuperGlue等）を使ってカメラ姿勢推定を行うスクリプト
 # 出力は COLMAP 互換形式（sparse/0/）で gaussian-splatting にそのまま渡せる
 # ペアリスト生成方式: exhaustive（全ペア・4ステップ）または retrieval（類似画像のみ・5ステップ）
+# 最後に colmap image_undistorter を実行し、PINHOLE モデルの undistorted/ を生成する
 
 import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -102,6 +105,33 @@ def main():
 
     print(f"完了: {len(model.images)} カメラ, {len(model.points3D)} 点群", flush=True)
     print(f"出力先: {sfm_dir}", flush=True)
+
+    # ── undistortion ─────────────────────────────────────────────────────────
+    # HLocはSIMPLE_RADIAL等の歪みモデルを使うため、3DGS学習前にPINHOLEへ変換する
+    print("[undistortion] PINHOLE変換を開始...", flush=True)
+    dense = source / "dense"
+    ret = subprocess.run([
+        "colmap", "image_undistorter",
+        "--image_path",  str(images),
+        "--input_path",  str(sfm_dir),
+        "--output_path", str(dense),
+        "--output_type", "COLMAP",
+    ]).returncode
+
+    if ret != 0:
+        print(f"ERROR: undistortionが失敗しました (code {ret})", file=sys.stderr)
+        sys.exit(ret)
+
+    # image_undistorter は sparse/ 直下にファイルを置くので sparse/0/ に整理する
+    dense_sparse   = dense / "sparse"
+    dense_sparse_0 = dense_sparse / "0"
+    if dense_sparse.exists() and not dense_sparse_0.exists():
+        dense_sparse_0.mkdir(parents=True, exist_ok=True)
+        for f in dense_sparse.iterdir():
+            if f.is_file():
+                shutil.move(str(f), str(dense_sparse_0 / f.name))
+
+    print(f"undistortion完了: {dense}", flush=True)
 
 
 if __name__ == "__main__":

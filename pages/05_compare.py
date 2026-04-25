@@ -53,8 +53,8 @@ def count_images(folder):
 
 
 def get_training_records(exp_path):
-    """学習ログから PSNR・L1 Loss の両方を取得する。
-    返す dict: {"iteration": int, "split": str, "PSNR": float, "L1": float}
+    """学習ログから PSNR・L1・SSIM・LPIPS を取得する。
+    返す dict: {"iteration": int, "split": str, "PSNR": float, "L1": float, ...}
     """
     records = []
     log_candidates = (
@@ -65,16 +65,22 @@ def get_training_records(exp_path):
     for log_file in log_candidates:
         text = log_file.read_text(errors="replace")
         for m in re.finditer(
-            r"\[ITER (\d+)\] Evaluating (\w+): L1 ([^\s]+) PSNR [^(\n]*\(([\d.]+)\)",
+            r"\[ITER (\d+)\] Evaluating (\w+): L1 ([^\s]+) PSNR ([^\s]+)"
+            r"(?:\s+SSIM ([^\s]+))?(?:\s+LPIPS ([^\s\[]+))?",
             text,
         ):
             try:
-                records.append({
+                rec = {
                     "iteration": int(m.group(1)),
                     "split":     m.group(2),
                     "L1":        float(m.group(3)),
                     "PSNR":      float(m.group(4)),
-                })
+                }
+                if m.group(5):
+                    rec["SSIM"]  = float(m.group(5))
+                if m.group(6):
+                    rec["LPIPS"] = float(m.group(6))
+                records.append(rec)
             except ValueError:
                 pass
         if records:
@@ -108,17 +114,30 @@ for exp in selected_exps:
     ply_files  = list((exp / "output").rglob("*.ply")) if has_output else []
     records    = all_records[exp.name]
 
-    best_psnr_test = best_psnr_train = None
-    min_l1_test    = min_l1_train    = None
+    best_psnr_test  = best_psnr_train  = None
+    best_ssim_test  = best_ssim_train  = None
+    min_lpips_test  = min_lpips_train  = None
+    min_l1_test     = min_l1_train     = None
     if records:
         test_r  = [r for r in records if r["split"] == "test"]
         train_r = [r for r in records if r["split"] == "train"]
-        if test_r:
-            best_psnr_test = max(r["PSNR"] for r in test_r)
-            min_l1_test    = min(r["L1"]   for r in test_r)
-        if train_r:
-            best_psnr_train = max(r["PSNR"] for r in train_r)
-            min_l1_train    = min(r["L1"]   for r in train_r)
+        for split_r, suffix in [(test_r, "test"), (train_r, "train")]:
+            if not split_r:
+                continue
+            psnr_vals  = [r["PSNR"]  for r in split_r]
+            l1_vals    = [r["L1"]    for r in split_r]
+            ssim_vals  = [r["SSIM"]  for r in split_r if "SSIM"  in r]
+            lpips_vals = [r["LPIPS"] for r in split_r if "LPIPS" in r]
+            if suffix == "test":
+                best_psnr_test  = max(psnr_vals)
+                min_l1_test     = min(l1_vals)
+                if ssim_vals:  best_ssim_test  = max(ssim_vals)
+                if lpips_vals: min_lpips_test  = min(lpips_vals)
+            else:
+                best_psnr_train = max(psnr_vals)
+                min_l1_train    = min(l1_vals)
+                if ssim_vals:  best_ssim_train = max(ssim_vals)
+                if lpips_vals: min_lpips_train = min(lpips_vals)
 
     note_path = exp / "note.md"
     note_preview = ""
@@ -127,14 +146,19 @@ for exp in selected_exps:
         note_preview = lines[0][:40] if lines else ""
 
     rows.append({
-        "実験名":        exp.name,
-        "フレーム数":    n_input,
-        "COLMAP":        "✅" if has_colmap else "❌",
-        "学習":          f"✅ ({len(ply_files)}ply)" if ply_files else ("⏳" if has_output else "❌"),
-        "最良 PSNR (test)":  f"{best_psnr_test:.2f} dB"  if best_psnr_test  else "-",
-        "最良 PSNR (train)": f"{best_psnr_train:.2f} dB" if best_psnr_train else "-",
-        "最小 L1 (test)":    f"{min_l1_test:.4f}"        if min_l1_test     else "-",
-        "メモ":          note_preview,
+        "実験名":             exp.name,
+        "フレーム数":         n_input,
+        "COLMAP":             "✅" if has_colmap else "❌",
+        "学習":               f"✅ ({len(ply_files)}ply)" if ply_files else ("⏳" if has_output else "❌"),
+        "PSNR test (dB)":     f"{best_psnr_test:.2f}"   if best_psnr_test  is not None else "-",
+        "PSNR train (dB)":    f"{best_psnr_train:.2f}"  if best_psnr_train is not None else "-",
+        "SSIM test":          f"{best_ssim_test:.4f}"   if best_ssim_test  is not None else "-",
+        "SSIM train":         f"{best_ssim_train:.4f}"  if best_ssim_train is not None else "-",
+        "LPIPS test":         f"{min_lpips_test:.4f}"   if min_lpips_test  is not None else "-",
+        "LPIPS train":        f"{min_lpips_train:.4f}"  if min_lpips_train is not None else "-",
+        "L1 test":            f"{min_l1_test:.4f}"      if min_l1_test     is not None else "-",
+        "L1 train":           f"{min_l1_train:.4f}"     if min_l1_train    is not None else "-",
+        "メモ":               note_preview,
     })
 
 df_summary = pd.DataFrame(rows).set_index("実験名")
@@ -143,43 +167,41 @@ st.dataframe(df_summary, use_container_width=True)
 # ── 学習曲線の重ね比較 ────────────────────────────────────────────────────────
 st.divider()
 st.subheader("📈 学習曲線の比較")
-st.caption("各実験の学習ログから PSNR・L1 Loss を抽出して重ね表示します。"
-           "split（test/train）と指標をラジオボタンで切り替えられます。")
+st.caption("各実験の学習ログから指標を抽出して重ね表示します。")
 
 any_records = any(all_records[e.name] for e in selected_exps)
 
 if not any_records:
     st.info("学習ログにデータが見つかりません。3DGS学習を完了してください。")
 else:
-    # フィルター UI
-    fc1, fc2 = st.columns([2, 2])
+    # 利用可能な指標を全レコードから収集
+    all_metric_keys = set()
+    for recs in all_records.values():
+        for r in recs:
+            all_metric_keys.update(r.keys() - {"iteration", "split"})
+    METRIC_OPTIONS = [m for m in ["PSNR", "SSIM", "LPIPS", "L1"] if m in all_metric_keys]
+    METRIC_HIGHER_IS_BETTER = {"PSNR": True, "SSIM": True, "LPIPS": False, "L1": False}
+
+    fc1, fc2 = st.columns([2, 3])
     with fc1:
         split_filter = st.radio(
-            "表示する split",
-            ["test", "train", "両方"],
-            horizontal=True,
-            index=0,
+            "表示する split", ["test", "train", "両方"],
+            horizontal=True, index=0,
         )
     with fc2:
-        metric = st.radio(
-            "指標",
-            ["PSNR (dB)", "L1 Loss"],
-            horizontal=True,
-            index=0,
+        metric_label = st.radio(
+            "指標", METRIC_OPTIONS,
+            horizontal=True, index=0,
         )
+    metric_col = metric_label
 
-    splits = (
-        ["test", "train"] if split_filter == "両方"
-        else [split_filter]
-    )
-    metric_col = "PSNR" if metric == "PSNR (dB)" else "L1"
+    splits = ["test", "train"] if split_filter == "両方" else [split_filter]
 
-    # グラフ用データ組み立て
     chart_series: dict[str, dict[int, float]] = {}
     for exp in selected_exps:
         records = all_records[exp.name]
         for sp in splits:
-            filtered = [r for r in records if r["split"] == sp]
+            filtered = [r for r in records if r["split"] == sp and metric_col in r]
             if not filtered:
                 continue
             label = exp.name if split_filter != "両方" else f"{exp.name} ({sp})"
@@ -194,20 +216,19 @@ else:
         chart_df.index.name = "iteration"
         st.line_chart(chart_df)
 
-        # 最良値サマリーテーブル
         st.markdown("**最良値サマリー**")
+        higher_is_better = METRIC_HIGHER_IS_BETTER.get(metric_col, True)
         stat_rows = []
         for label, vals in chart_series.items():
             if not vals:
                 continue
-            if metric_col == "PSNR":
-                best_iter = max(vals, key=vals.get)
-                best_val  = vals[best_iter]
-                stat_rows.append({"系列": label, "最高 PSNR (dB)": f"{best_val:.3f}", "達成 iter": best_iter})
-            else:
-                best_iter = min(vals, key=vals.get)
-                best_val  = vals[best_iter]
-                stat_rows.append({"系列": label, "最小 L1 Loss": f"{best_val:.5f}", "達成 iter": best_iter})
+            best_iter = (max if higher_is_better else min)(vals, key=vals.get)
+            best_val  = vals[best_iter]
+            stat_rows.append({
+                "系列": label,
+                f"{'最高' if higher_is_better else '最小'} {metric_col}": f"{best_val:.4f}",
+                "達成 iter": best_iter,
+            })
         st.dataframe(pd.DataFrame(stat_rows).set_index("系列"), use_container_width=True)
     else:
         st.info("選択した条件に合うデータがありません。")

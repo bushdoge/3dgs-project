@@ -89,6 +89,7 @@ DEFAULT_PIPELINE = {
     "save_iterations": [7000, 30000],
     "test_iterations": [7000, 30000],
     "eval": False,
+    "resolution": None,   # None = VRAM自動判定
     "proc": None,
     "pid": None,       # サブプロセスのPID（再起動後の復元用）
     "log_path": None,
@@ -242,12 +243,15 @@ def _write_settings_header(log_file, step_label: str):
             f"    カメラモデル: {pl.get('camera_model')}",
             f"    GPU         : {'あり' if pl.get('use_gpu') else 'なし'}",
         ]
+    res = pl.get("resolution")
+    res_label = f"{res}x 縮小" if res else "自動（VRAM量から判定）"
     lines += [
         "",
         "  [3DGS学習]",
         f"    イテレーション : {pl.get('iterations')}",
         f"    保存           : {save_iters}",
         f"    テスト         : {test_iters}",
+        f"    解像度         : {res_label}",
         "=" * 64,
         "",
     ]
@@ -307,6 +311,8 @@ def start_training():
     ]
     if pl.get("eval"):
         cmd.append("--eval")
+    if pl.get("resolution") is not None:
+        cmd += ["--resolution", str(pl["resolution"])]
     log_file = open(log_path, "w")
     _write_settings_header(log_file, "3DGS学習")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
@@ -763,6 +769,27 @@ if use_eval:
 else:
     st.caption("📊 全フレームを学習に使用します。test PSNRは計算されません。")
 
+_res_options = {
+    "自動（VRAM量から自動判定）★推奨": None,
+    "元解像度のまま（1x）": 1,
+    "1/2 に縮小（2x）": 2,
+    "1/4 に縮小（4x）": 4,
+    "1/8 に縮小（8x）": 8,
+}
+_res_default = st.session_state.get("pl_resolution", None)
+_res_label_default = next((k for k, v in _res_options.items() if v == _res_default),
+                          "自動（VRAM量から自動判定）★推奨")
+_res_label = st.selectbox(
+    "画像解像度（--resolution）",
+    list(_res_options.keys()),
+    index=list(_res_options.keys()).index(_res_label_default),
+    help="「自動」にするとVRAMと画像枚数・サイズからOOMにならない倍率を自動計算します。",
+)
+resolution = _res_options[_res_label]
+if resolution == 1:
+    resolution = None  # 1x = 縮小なし = None扱い
+st.session_state["pl_resolution"] = resolution
+
 st.divider()
 
 st.error("⚠️ 学習はGPUを長時間占有します。他の処理が動いていないか確認してください。")
@@ -818,6 +845,7 @@ if st.button("🚀 パイプラインを開始", type="primary",
             "save_iterations": save_iters or [7000, 30000],
             "test_iterations": test_iters or [7000, 30000],
             "eval": use_eval,
+            "resolution": resolution,
         })
         log_file = open(log_path, "w")
         _write_settings_header(log_file, "フレーム抽出")

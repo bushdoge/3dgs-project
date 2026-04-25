@@ -26,30 +26,34 @@ def is_training():
 
 
 def parse_log(log_text):
-    """ログからLossとPSNRを抽出してリストで返す"""
-    # tqdmのキャリッジリターン除去
+    """ログからLoss・PSNR・SSIM・LPIPSを抽出してリストで返す"""
     cleaned = "\n".join(
         line.split("\r")[-1] for line in log_text.split("\n")
     )
 
-    # Loss抽出（tqdmの進捗バーから）
     losses = []
     for m in re.finditer(r"Loss:\s*([\d.]+)", cleaned):
         losses.append(float(m.group(1)))
 
-    # PSNR抽出（評価ステップのログ行から）
-    psnr_records = []
+    eval_records = []
     for m in re.finditer(
-        r"\[ITER (\d+)\] Evaluating (\w+): L1 [^\s]+ PSNR [^(\n]*\(([\d.]+)\)",
+        r"\[ITER (\d+)\] Evaluating (\w+): L1 ([^\s]+) PSNR ([^\s]+)"
+        r"(?:\s+SSIM ([^\s]+))?(?:\s+LPIPS ([^\s\[]+))?",
         cleaned,
     ):
-        psnr_records.append({
+        rec = {
             "iteration": int(m.group(1)),
-            "split": m.group(2),
-            "PSNR": float(m.group(3)),
-        })
+            "split":     m.group(2),
+            "PSNR":      float(m.group(4)),
+            "L1":        float(m.group(3)),
+        }
+        if m.group(5):
+            rec["SSIM"]  = float(m.group(5))
+        if m.group(6):
+            rec["LPIPS"] = float(m.group(6))
+        eval_records.append(rec)
 
-    return losses, psnr_records, cleaned
+    return losses, eval_records, cleaned
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -81,13 +85,11 @@ if is_training() or (
     if log_path.exists():
         log_text = log_path.read_text(errors="replace")
 
-    losses, psnr_records, cleaned_log = parse_log(log_text)
+    losses, eval_records, cleaned_log = parse_log(log_text)
 
     # ── 進捗バー ──
     iters = st.session_state.train_iterations
     if losses:
-        # tqdmのパーセント表示から現在ステップを推定
-        m = re.search(r"(\d+)/(\d+)", cleaned_log.split("\n")[-50:][0] if cleaned_log else "")
         current_iter = 0
         for line in reversed(cleaned_log.split("\n")):
             m2 = re.search(r"(\d+)/" + str(iters), line)
@@ -98,28 +100,25 @@ if is_training() or (
             st.progress(min(current_iter / iters, 1.0),
                         text=f"{current_iter:,} / {iters:,} ステップ")
 
-    # ── Loss グラフ ──
-    if losses:
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            st.subheader("📉 Loss（直近500点）")
-            display_losses = losses[-500:]
-            st.line_chart(
-                {"Loss": display_losses},
-                height=200,
-            )
+    # ── グラフ ──
+    import pandas as pd
 
-        # ── PSNR グラフ ──
-        with col_g2:
-            if psnr_records:
-                st.subheader("📈 PSNR（評価ステップ）")
-                import pandas as pd
-                df = pd.DataFrame(psnr_records)
-                pivot = df.pivot(index="iteration", columns="split", values="PSNR")
-                st.line_chart(pivot, height=200)
-            else:
-                st.subheader("📈 PSNR（評価ステップ）")
-                st.caption("評価タイミング（test_iterations）になると表示されます")
+    if losses:
+        st.subheader("📉 Loss（直近500点）")
+        st.line_chart({"Loss": losses[-500:]}, height=180)
+
+    if eval_records:
+        df_eval = pd.DataFrame(eval_records)
+        metrics_available = [c for c in ["PSNR", "SSIM", "LPIPS", "L1"] if c in df_eval.columns]
+        col_charts = st.columns(len(metrics_available))
+        icons = {"PSNR": "📈", "SSIM": "📊", "LPIPS": "📉", "L1": "📉"}
+        for col, metric in zip(col_charts, metrics_available):
+            with col:
+                st.subheader(f"{icons.get(metric,'📊')} {metric}")
+                pivot = df_eval.pivot(index="iteration", columns="split", values=metric)
+                st.line_chart(pivot, height=180)
+    else:
+        st.caption("評価タイミング（test_iterations）になるとグラフが表示されます")
 
     # ── 最新ログ ──
     with st.expander("📋 学習ログ（末尾）", expanded=False):
@@ -206,6 +205,26 @@ with col3:
         help="PSNR等の評価を行うステップ数",
     )
 
+# ── 解像度設定 ────────────────────────────────────────────────────────────────
+st.subheader("解像度設定（OOM対策）")
+
+resolution_options = {
+    "自動（VRAM量から自動判定）★推奨": None,
+    "元解像度のまま（1x）": 1,
+    "1/2 に縮小（2x）": 2,
+    "1/4 に縮小（4x）": 4,
+    "1/8 に縮小（8x）": 8,
+}
+resolution_label = st.selectbox(
+    "画像縮小倍率",
+    list(resolution_options.keys()),
+    index=0,
+    help="「自動」にするとVRAMと画像枚数・サイズからOOMにならない倍率を自動計算します。",
+)
+resolution = resolution_options[resolution_label]
+if resolution == 1:
+    resolution = None  # 1x = 縮小なし
+
 # ── 評価設定 ──────────────────────────────────────────────────────────────────
 use_eval = st.checkbox(
     "train/test 分割を有効にする（--eval）",
@@ -230,7 +249,7 @@ save_list = [s.strip() for s in save_iterations.split(",") if s.strip()]
 test_list = [t.strip() for t in test_iterations.split(",") if t.strip()]
 
 cmd_parts = [
-    "python /workspace/scripts/run_train.py",
+    "python3 /workspace/scripts/run_train.py",
     f'--source "{source_path}"',
     f'--model_path "{model_path}"',
     f"--iterations {iterations}",
@@ -239,6 +258,8 @@ if save_list:
     cmd_parts.append("--save_iterations " + " ".join(save_list))
 if test_list:
     cmd_parts.append("--test_iterations " + " ".join(test_list))
+if resolution is not None:
+    cmd_parts.append(f"--resolution {resolution}")
 if use_eval:
     cmd_parts.append("--eval")
 
@@ -260,7 +281,7 @@ if st.button("▶ 学習を開始", type="primary",
         log_path = str(Path(model_path) / "train_log.txt")
 
         run_args = [
-            "python", "/workspace/scripts/run_train.py",
+            "python3", "/workspace/scripts/run_train.py",
             "--source", source_path,
             "--model_path", model_path,
             "--iterations", str(iterations),
@@ -269,6 +290,8 @@ if st.button("▶ 学習を開始", type="primary",
             run_args += ["--save_iterations"] + save_list
         if test_list:
             run_args += ["--test_iterations"] + test_list
+        if resolution is not None:
+            run_args += ["--resolution", str(resolution)]
         if use_eval:
             run_args.append("--eval")
 
