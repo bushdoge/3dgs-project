@@ -215,6 +215,62 @@ if has_output:
     else:
         st.info("point_cloud/ フォルダがまだありません。")
 
+# ── ローカルテスト用ZIPダウンロード ───────────────────────────────────────────
+st.divider()
+st.subheader("📦 ローカルテスト用 ZIP ダウンロード")
+st.caption("point_cloud.ply・cameras.json・cfg_args をまとめてダウンロードできます。")
+
+_dl_pc_dir = exp_path / "output" / "point_cloud"
+_dl_iters  = [d.name for d in sorted(_dl_pc_dir.iterdir()) if (_dl_pc_dir / d.name / "point_cloud.ply").exists()] if _dl_pc_dir.exists() else []
+
+if not _dl_iters:
+    st.info("ダウンロード可能な point_cloud.ply が見つかりません。先に学習を完了してください。")
+else:
+    _dc1, _dc2, _dc3 = st.columns(3)
+    with _dc1:
+        _dl_sel_iter = st.selectbox("イテレーション", _dl_iters,
+                                    index=len(_dl_iters) - 1, key="res_dl_iter")
+    with _dc2:
+        _dl_renders = st.checkbox("レンダリング画像を含める", value=False, key="res_dl_renders")
+    with _dc3:
+        _dl_ply_size = (_dl_pc_dir / _dl_sel_iter / "point_cloud.ply").stat().st_size / 1e6
+        st.metric("PLYサイズ", f"{_dl_ply_size:.1f} MB")
+
+    if st.button("📦 ZIP を作成", key="res_dl_btn"):
+        import zipfile as _zf
+        _zip_path = Path("/workspace/tmp") / f"{exp_path.name}_{_dl_sel_iter}.zip"
+        _zip_path.parent.mkdir(parents=True, exist_ok=True)
+        with st.spinner("ZIP 作成中..."):
+            with _zf.ZipFile(_zip_path, "w", _zf.ZIP_DEFLATED, compresslevel=1) as _z:
+                _ply = _dl_pc_dir / _dl_sel_iter / "point_cloud.ply"
+                if _ply.exists():
+                    _z.write(_ply, f"output/point_cloud/{_dl_sel_iter}/point_cloud.ply")
+                for _fn in ["cameras.json", "cfg_args"]:
+                    _fp = exp_path / "output" / _fn
+                    if _fp.exists():
+                        _z.write(_fp, f"output/{_fn}")
+                if _dl_renders:
+                    for _split in ["test", "train"]:
+                        _sd = exp_path / "output" / _split
+                        if _sd.exists():
+                            for _id in sorted(_sd.iterdir()):
+                                _rd = _id / "renders"
+                                for _img in sorted(_rd.glob("*.png"))[:50] if _rd.exists() else []:
+                                    _z.write(_img, f"output/{_split}/{_id.name}/renders/{_img.name}")
+        st.session_state["res_zip_path"] = str(_zip_path)
+        st.session_state["res_zip_name"] = _zip_path.name
+        st.rerun()
+
+    if st.session_state.get("res_zip_path") and Path(st.session_state["res_zip_path"]).exists():
+        _zsize = Path(st.session_state["res_zip_path"]).stat().st_size / 1e6
+        st.download_button(
+            f"⬇ ダウンロード（{_zsize:.1f} MB）",
+            data=Path(st.session_state["res_zip_path"]).read_bytes(),
+            file_name=st.session_state["res_zip_name"],
+            mime="application/zip",
+            key="res_dl_download",
+        )
+
 # ── レンダリング実行 ──────────────────────────────────────────────────────────
 st.divider()
 st.subheader("🎬 レンダリング実行")

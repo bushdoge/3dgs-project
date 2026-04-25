@@ -129,8 +129,8 @@ if not selected_name:
 
 selected_exp = EXPERIMENTS_DIR / selected_name
 
-tab_note, tab_logs, tab_config, tab_delete = st.tabs(
-    ["📝 メモ編集", "📋 ログ閲覧", "⚙️ 設定確認", "🗑️ フォルダ削除"]
+tab_note, tab_logs, tab_config, tab_dl, tab_delete = st.tabs(
+    ["📝 メモ編集", "📋 ログ閲覧", "⚙️ 設定確認", "📦 ダウンロード", "🗑️ フォルダ削除"]
 )
 
 # ── メモ編集タブ ─────────────────────────────────────────────────────────────
@@ -292,6 +292,66 @@ with tab_config:
 
     if not config_path.exists() and not cfg_args_list:
         st.info("設定ファイルが見つかりません。パイプラインを実行すると config.yaml が生成されます。")
+
+# ── ダウンロードタブ ──────────────────────────────────────────────────────────
+with tab_dl:
+    import zipfile as _zf
+
+    st.caption("point_cloud.ply・cameras.json・cfg_args をまとめてダウンロードできます。")
+
+    _em_pc_dir = selected_exp / "output" / "point_cloud"
+    _em_iters  = (
+        [d.name for d in sorted(_em_pc_dir.iterdir())
+         if (_em_pc_dir / d.name / "point_cloud.ply").exists()]
+        if _em_pc_dir.exists() else []
+    )
+
+    if not _em_iters:
+        st.info("ダウンロード可能な point_cloud.ply が見つかりません。先に学習を完了してください。")
+    else:
+        _ec1, _ec2, _ec3 = st.columns(3)
+        with _ec1:
+            _em_sel_iter = st.selectbox("イテレーション", _em_iters,
+                                        index=len(_em_iters) - 1, key="em_dl_iter")
+        with _ec2:
+            _em_renders = st.checkbox("レンダリング画像を含める", value=False, key="em_dl_renders")
+        with _ec3:
+            _em_ply_size = (_em_pc_dir / _em_sel_iter / "point_cloud.ply").stat().st_size / 1e6
+            st.metric("PLYサイズ", f"{_em_ply_size:.1f} MB")
+
+        if st.button("📦 ZIP を作成", key="em_dl_btn"):
+            _em_zip_path = Path("/workspace/tmp") / f"{selected_name}_{_em_sel_iter}.zip"
+            _em_zip_path.parent.mkdir(parents=True, exist_ok=True)
+            with st.spinner("ZIP 作成中..."):
+                with _zf.ZipFile(_em_zip_path, "w", _zf.ZIP_DEFLATED, compresslevel=1) as _z:
+                    _em_ply = _em_pc_dir / _em_sel_iter / "point_cloud.ply"
+                    if _em_ply.exists():
+                        _z.write(_em_ply, f"output/point_cloud/{_em_sel_iter}/point_cloud.ply")
+                    for _fn in ["cameras.json", "cfg_args"]:
+                        _fp = selected_exp / "output" / _fn
+                        if _fp.exists():
+                            _z.write(_fp, f"output/{_fn}")
+                    if _em_renders:
+                        for _split in ["test", "train"]:
+                            _sd = selected_exp / "output" / _split
+                            if _sd.exists():
+                                for _id in sorted(_sd.iterdir()):
+                                    _rd = _id / "renders"
+                                    for _img in (sorted(_rd.glob("*.png"))[:50] if _rd.exists() else []):
+                                        _z.write(_img, f"output/{_split}/{_id.name}/renders/{_img.name}")
+            st.session_state["em_zip_path"] = str(_em_zip_path)
+            st.session_state["em_zip_name"] = _em_zip_path.name
+            st.rerun()
+
+        if st.session_state.get("em_zip_path") and Path(st.session_state["em_zip_path"]).exists():
+            _em_zsize = Path(st.session_state["em_zip_path"]).stat().st_size / 1e6
+            st.download_button(
+                f"⬇ ダウンロード（{_em_zsize:.1f} MB）",
+                data=Path(st.session_state["em_zip_path"]).read_bytes(),
+                file_name=st.session_state["em_zip_name"],
+                mime="application/zip",
+                key="em_dl_download",
+            )
 
 # ── 削除タブ ─────────────────────────────────────────────────────────────────
 with tab_delete:
