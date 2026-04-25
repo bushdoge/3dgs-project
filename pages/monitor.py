@@ -320,14 +320,13 @@ with cc3:
 
 placeholder = st.empty()
 
-# ─── データ収集 ───────────────────────────────────────────────────────────────
-gpus, gpu_err = parse_nvidia_smi()
-procs = parse_processes()
-cpu   = parse_cpu()
-mem   = parse_memory()
-now   = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-
-if True:
+# ═════════════════════════════════════════════════════════════════════════════
+while True:
+    gpus, gpu_err  = parse_nvidia_smi()
+    procs = parse_processes()
+    cpu   = parse_cpu()
+    mem   = parse_memory()
+    now   = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
 
     # 履歴更新
     for gpu in gpus:
@@ -531,12 +530,13 @@ if True:
             unsafe_allow_html=True,
         )
 
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass
+    if not auto:
+        break
 
-if auto:
+    try:
+        from pipeline_widget import render_sticky_footer
+        render_sticky_footer()
+    except Exception:
+        pass
+
     time.sleep(refresh_rate)
-    st.rerun()
