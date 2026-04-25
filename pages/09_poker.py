@@ -302,24 +302,26 @@ if "tx_pchips" not in st.session_state:
 
 def _card_html(rank, suit, highlight=False):
     red   = suit in ("♥", "♦")
-    color = "#ff5555" if red else "#d8eaf8"
-    bg    = "#0f2a44" if highlight else "#0c1a28"
-    bdr   = "2px solid #00bbee" if highlight else "1px solid #223344"
+    color = "#ff6060" if red else "#d8eaf8"
+    bg    = "#132840" if highlight else "#0d1e30"
+    bdr   = "2px solid #00ccff" if highlight else "1px solid #1e3348"
+    shd   = "0 0 10px #00ccff55" if highlight else "none"
     return (
-        f'<div style="background:{bg};border:{bdr};border-radius:7px;'
-        f'width:54px;height:78px;display:inline-flex;flex-direction:column;'
-        f'align-items:center;justify-content:center;flex-shrink:0;">'
-        f'<span style="font-size:1.4rem;font-weight:bold;color:{color};line-height:1.1;">{rank}</span>'
-        f'<span style="font-size:1.2rem;color:{color};line-height:1.1;">{suit}</span>'
+        f'<div style="background:{bg};border:{bdr};border-radius:8px;'
+        f'width:58px;height:84px;padding:6px 5px;box-sizing:border-box;'
+        f'display:inline-flex;flex-direction:column;align-items:center;'
+        f'justify-content:center;flex-shrink:0;box-shadow:{shd};">'
+        f'<div style="font-size:1.5rem;font-weight:bold;color:{color};line-height:1;">{rank}</div>'
+        f'<div style="font-size:1.3rem;color:{color};line-height:1;margin-top:2px;">{suit}</div>'
         f'</div>'
     )
 
 def _back_html():
     return (
-        '<div style="background:#080e18;border:1px solid #1a2d3d;border-radius:7px;'
-        'width:54px;height:78px;display:inline-flex;align-items:center;'
+        '<div style="background:#0c1520;border:1px solid #1e3348;border-radius:8px;'
+        'width:58px;height:84px;display:inline-flex;align-items:center;'
         'justify-content:center;flex-shrink:0;">'
-        '<span style="font-size:1.8rem;opacity:0.5;">🂠</span>'
+        '<span style="font-size:2rem;opacity:0.6;">🂠</span>'
         '</div>'
     )
 
@@ -480,9 +482,8 @@ else:
                       on_click=player_action, args=("allin",),
                       disabled=(pchips <= 0))
         with a5:
-            st.button("🏳 折", use_container_width=True,
-                      on_click=player_action, args=("fold",),
-                      help="フォールド（降りる）")
+            st.button("🏳 フォールド", use_container_width=True,
+                      on_click=player_action, args=("fold",))
     else:
         st.caption("🤖 CPU が考えています...")
 
