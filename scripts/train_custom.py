@@ -12,11 +12,15 @@
 # 評価ログに SSIM・LPIPS を追加している。
 
 import os
+import sys
+
+# gaussian-splatting のモジュール（utils, scene, gaussian_renderer 等）を参照するために追加
+sys.path.insert(0, "/opt/gaussian-splatting")
+
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
-import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, get_expon_lr_func
 import uuid
