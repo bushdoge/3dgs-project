@@ -162,6 +162,17 @@ def _parse_progress(pl: dict) -> tuple:
             pct = min(cur / total, 1.0)
             return pct, f"学習 {cur:,}/{total:,} iter ({pct*100:.0f}%)"
 
+    elif step == "rendering":
+        m = re.findall(r'Rendering progress.*?(\d+)/(\d+)', content)
+        if not m:
+            # gaussian-splatting の render.py は tqdm 形式も使う
+            m = re.findall(r'\|\s*(\d+)/(\d+)\s+\[', content)
+        if m:
+            cur, tot = int(m[-1][0]), int(m[-1][1])
+            if tot > 0:
+                pct = min(cur / tot, 1.0)
+                return pct, f"レンダリング {cur}/{tot} フレーム ({pct*100:.0f}%)"
+
     return None, ""
 
 
@@ -314,25 +325,69 @@ def render_pipeline_status(compact: bool = False):
 #  固定フッター（全ページ共通）
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _is_pid_alive(pid) -> bool:
+    """PIDのプロセスが生きているか確認する（ゾンビ除く）"""
+    if not pid:
+        return False
+    try:
+        status = Path(f"/proc/{pid}/status")
+        if not status.exists():
+            return False
+        for line in status.read_text().splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line
+        return False
+    except Exception:
+        return False
+
+
 def render_sticky_footer():
     """
     ページ下部に固定表示するプログレスバー。
-    パイプライン実行中のみ表示。ページのリロード・操作時に更新される。
-    各ページの末尾で呼び出す。
+    パイプラインまたは単品タスク実行中に表示。各ページの末尾で呼び出す。
     """
+    # ── パイプライン状態 ────────────────────────────────────────────
     pl = _load_state()
-    if not pl.get("active") or pl.get("step") in ("done", "failed", "setup", None):
+    pipeline_active = pl.get("active") and pl.get("step") not in ("done", "failed", "setup", None)
+
+    # ── 単品タスク状態 ──────────────────────────────────────────────
+    task = st.session_state.get("active_task")
+    task_active = task is not None and _is_pid_alive(task.get("pid"))
+
+    # 終わったタスクを自動クリア
+    if task is not None and not task_active and not pipeline_active:
+        st.session_state.pop("active_task", None)
+        return
+    if not pipeline_active and not task_active:
         return
 
-    pct, label = _parse_progress(pl)
-    step_ja    = _STEP_JA.get(pl.get("step", ""), "")
-    scene      = Path(pl.get("experiment_dir", "")).name or ""
+    # パイプライン優先で表示ステートを選択
+    state = pl if pipeline_active else task
+    step  = state.get("step", "")
+
+    # シーン名
+    scene = (
+        Path(state.get("experiment_dir", "")).name
+        or state.get("scene", "")
+        or "作業中"
+    )
+
+    pct, label = _parse_progress(state)
     pct_val    = (pct or 0.0) * 100
+
+    # ステップ表示名
+    _TASK_LABELS = {
+        "extracting": "フレーム抽出",
+        "colmap":     "COLMAP / HLoc",
+        "training":   "3DGS学習",
+        "rendering":  "レンダリング",
+    }
+    step_ja = state.get("label") or _STEP_JA.get(step) or _TASK_LABELS.get(step, step)
 
     # COLMAPの場合は最も進んでいるサブステップ名を表示
     detail_label = label
-    if pl.get("step") == "colmap":
-        substeps = _parse_colmap_substeps(pl)
+    if step == "colmap":
+        substeps = _parse_colmap_substeps(state)
         running  = next((s for s in substeps if s["status"] == "running"), None)
         if running:
             sub_detail = (f'{running["cur"]:,}/{running["items"]:,}'

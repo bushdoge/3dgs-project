@@ -1,8 +1,12 @@
 # COLMAPまたはHLocでカメラ姿勢推定（Structure from Motion）を実行するページ
 # バックエンドをプリセット or 自由組み合わせで選択できる。完了後にカメラ位置の3D可視化も表示する
 
+import os
+import re
+import signal
 import sys
 import subprocess
+import time
 import numpy as np
 from pathlib import Path
 
@@ -12,18 +16,103 @@ sys.path.insert(0, "/opt/gaussian-splatting")
 from scene.colmap_loader import read_extrinsics_binary, read_points3D_binary, qvec2rotmat
 
 
-st.title("📷 姿勢推定（COLMAP / HLoc）")
-st.caption("フレーム画像からカメラ姿勢を推定します（Structure from Motion）")
-
-st.divider()
-
 # ── セッション状態の初期化 ────────────────────────────────────────────────────
+if "colmap_proc"        not in st.session_state: st.session_state.colmap_proc        = None
+if "colmap_log_path"    not in st.session_state: st.session_state.colmap_log_path    = None
+if "colmap_source_path" not in st.session_state: st.session_state.colmap_source_path = None
+if "colmap_use_hloc"    not in st.session_state: st.session_state.colmap_use_hloc    = False
 if "sfm_use_hloc"       not in st.session_state: st.session_state.sfm_use_hloc       = False
 if "sfm_feature"        not in st.session_state: st.session_state.sfm_feature        = "superpoint_max"
 if "sfm_matcher"        not in st.session_state: st.session_state.sfm_matcher        = "superpoint+lightglue"
 if "sfm_pair_method"    not in st.session_state: st.session_state.sfm_pair_method    = "exhaustive"
 if "sfm_retrieval_model" not in st.session_state: st.session_state.sfm_retrieval_model = "netvlad"
 if "sfm_num_matched"    not in st.session_state: st.session_state.sfm_num_matched    = 20
+
+
+def _colmap_running():
+    p = st.session_state.colmap_proc
+    return p is not None and p.poll() is None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  実行中 / 完了ビュー
+# ════════════════════════════════════════════════════════════════════════════
+if _colmap_running() or (
+    st.session_state.colmap_proc is not None
+    and st.session_state.colmap_proc.poll() is not None
+):
+    proc    = st.session_state.colmap_proc
+    running = proc.poll() is None
+
+    st.title("📷 姿勢推定（COLMAP / HLoc）")
+    if running:
+        st.markdown('<span style="color:#00cc66">● 実行中</span>', unsafe_allow_html=True)
+    elif proc.returncode == 0:
+        st.success("✅ 姿勢推定完了！")
+    else:
+        st.error(f"❌ エラーで終了しました（終了コード: {proc.returncode}）")
+
+    log_path = Path(st.session_state.colmap_log_path or "")
+    log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
+
+    # サブステップ進捗（pipeline_widgetを再利用）
+    try:
+        from pipeline_widget import _parse_colmap_substeps, _render_substep_bars, _parse_progress
+        _state = {
+            "step":      "colmap",
+            "log_path":  str(log_path),
+            "use_hloc":  st.session_state.colmap_use_hloc,
+        }
+        substeps = _parse_colmap_substeps(_state)
+        if substeps:
+            _render_substep_bars(substeps)
+        else:
+            pct, label = _parse_progress(_state)
+            if pct is not None:
+                st.progress(pct, text=label)
+            else:
+                st.caption("ログを解析中...")
+    except Exception:
+        pass
+
+    with st.expander("📋 ログ（末尾）", expanded=False):
+        lines = [l for l in log_text.replace("\r", "\n").split("\n") if l.strip()]
+        st.code("\n".join(lines[-30:]) or "（まだログがありません）", language=None)
+
+    st.divider()
+    c1, _ = st.columns([1, 5])
+    with c1:
+        if running:
+            if st.button("⏹ 中断", type="secondary"):
+                try:
+                    os.kill(proc.pid, signal.SIGTERM)
+                except Exception:
+                    pass
+                st.session_state.colmap_proc = None
+                st.session_state.pop("active_task", None)
+                st.rerun()
+        else:
+            if st.button("← 設定に戻る"):
+                st.session_state.colmap_proc = None
+                st.session_state.pop("active_task", None)
+                st.rerun()
+
+    if running:
+        time.sleep(3)
+        st.rerun()
+
+    try:
+        from pipeline_widget import render_sticky_footer
+        render_sticky_footer()
+    except Exception:
+        pass
+    st.stop()
+
+
+st.title("📷 姿勢推定（COLMAP / HLoc）")
+st.caption("フレーム画像からカメラ姿勢を推定します（Structure from Motion）")
+
+st.divider()
 
 # ── 入力設定 ──────────────────────────────────────────────────────────────────
 st.subheader("入力設定")
@@ -249,23 +338,25 @@ if st.button(btn_label, type="primary", disabled=not source_path):
                 run_args.append("--no_gpu")
             spinner_msg = "COLMAP実行中（数分〜数十分かかります）..."
 
-        with st.spinner(spinner_msg):
-            result = subprocess.run(run_args, capture_output=True, text=True)
+        log_path = str(Path(source_path) / "colmap_log.txt")
+        log_file = open(log_path, "w")
+        proc = subprocess.Popen(run_args, stdout=log_file, stderr=subprocess.STDOUT)
 
-        if result.returncode == 0:
-            sparse_dir = Path(source_path) / "sparse" / "0"
-            if sparse_dir.exists():
-                st.success("姿勢推定が正常に完了しました！")
-                st.info(f"次のステップ：「🧠 3DGS学習実行」ページで `{source_path}` を選択してください。")
-            else:
-                st.warning("完了しましたが sparse/0/ が見つかりません。ログを確認してください。")
-        else:
-            st.error("実行中にエラーが発生しました。")
-
-        with st.expander("ログを表示"):
-            st.text(result.stdout or "（出力なし）")
-            if result.stderr:
-                st.text("STDERR:\n" + result.stderr)
+        scene = Path(source_path).name
+        st.session_state.colmap_proc        = proc
+        st.session_state.colmap_log_path    = log_path
+        st.session_state.colmap_source_path = source_path
+        st.session_state.colmap_use_hloc    = use_hloc
+        st.session_state.active_task = {
+            "step":       "colmap",
+            "label":      "HLoc" if use_hloc else "COLMAP",
+            "scene":      scene,
+            "log_path":   log_path,
+            "pid":        proc.pid,
+            "start_time": time.time(),
+            "use_hloc":   use_hloc,
+        }
+        st.rerun()
 
 # ── 結果の可視化 ──────────────────────────────────────────────────────────────
 if source_path:

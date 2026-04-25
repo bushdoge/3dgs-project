@@ -139,8 +139,10 @@ if is_training() or (
                 except Exception:
                     pass
                 st.session_state.train_proc = None
+                st.session_state.pop("active_task", None)
                 st.rerun()
         else:
+            st.session_state.pop("active_task", None)
             if st.button("← 設定画面に戻る"):
                 st.session_state.train_proc = None
                 st.rerun()
@@ -335,6 +337,15 @@ if st.button("▶ 学習を開始", type="primary",
         st.session_state.train_model_path = model_path
         st.session_state.train_source = source_path
         st.session_state.train_iterations = iterations
+        st.session_state.active_task = {
+            "step":       "training",
+            "label":      "3DGS学習",
+            "scene":      Path(source_path).name,
+            "log_path":   log_path,
+            "pid":        proc.pid,
+            "start_time": time.time(),
+            "iterations": iterations,
+        }
 
         st.rerun()
 

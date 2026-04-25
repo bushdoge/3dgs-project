@@ -274,8 +274,10 @@ else:
                     except Exception:
                         pass
                     st.session_state.render_proc = None
+                    st.session_state.pop("active_task", None)
                     st.rerun()
             else:
+                st.session_state.pop("active_task", None)
                 if st.button("← 設定に戻る"):
                     st.session_state.render_proc = None
                     st.rerun()
@@ -335,6 +337,14 @@ else:
             st.session_state.render_proc     = proc
             st.session_state.render_log_path = log_path
             st.session_state.render_exp      = str(exp_path)
+            st.session_state.active_task = {
+                "step":       "rendering",
+                "label":      "レンダリング",
+                "scene":      exp_path.name,
+                "log_path":   log_path,
+                "pid":        proc.pid,
+                "start_time": time.time(),
+            }
             st.rerun()
 
 # ── 学習ログとPSNR ────────────────────────────────────────────────────────────
