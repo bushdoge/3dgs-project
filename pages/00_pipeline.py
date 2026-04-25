@@ -77,7 +77,7 @@ DEFAULT_PIPELINE = {
     "angles": [(0, 0), (90, 0), (180, 0), (270, 0)],
     # 姿勢推定
     "use_hloc": False,
-    "feature_type": "superpoint_max",
+    "feature_type": "superpoint_aachen",
     "matcher_type": "superpoint+lightglue",
     "pair_method": "exhaustive",
     "retrieval_model": "netvlad",
@@ -563,7 +563,7 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
             if st.button("📂 読み込む", use_container_width=True, key="load_preset_btn"):
                 p = presets[sel_preset]
                 st.session_state["pl_use_hloc"]        = bool(p.get("use_hloc", False))
-                st.session_state["pl_feature"]         = p.get("feature_type", "superpoint_max")
+                st.session_state["pl_feature"]         = p.get("feature_type", "superpoint_aachen")
                 st.session_state["pl_matcher"]         = p.get("matcher_type", "superpoint+lightglue")
                 st.session_state["pl_pair_method"]     = p.get("pair_method", "exhaustive")
                 st.session_state["pl_retrieval_model"] = p.get("retrieval_model", "netvlad")
@@ -611,7 +611,7 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
                 _sel_ti  = st.session_state.get("pl_selected_test_iters", {7000, 30000})
                 cur = {
                     "use_hloc":        st.session_state.get("pl_use_hloc", False),
-                    "feature_type":    st.session_state.get("pl_feature", "superpoint_max"),
+                    "feature_type":    st.session_state.get("pl_feature", "superpoint_aachen"),
                     "matcher_type":    st.session_state.get("pl_matcher", "superpoint+lightglue"),
                     "pair_method":     st.session_state.get("pl_pair_method", "exhaustive"),
                     "retrieval_model": st.session_state.get("pl_retrieval_model", "netvlad"),
@@ -634,8 +634,8 @@ st.subheader("⚙️ 姿勢推定（Step 2）設定")
 # 特徴量プリセット
 PRESETS = [
     ("COLMAP\n（標準）",         False, None,             None),
-    ("SuperPoint\n+LightGlue",  True,  "superpoint_max", "superpoint+lightglue"),
-    ("SuperPoint\n+SuperGlue",  True,  "superpoint_max", "superglue"),
+    ("SuperPoint\n+LightGlue",  True,  "superpoint_aachen", "superpoint+lightglue"),
+    ("SuperPoint\n+SuperGlue",  True,  "superpoint_aachen", "superglue"),
     ("DISK\n+LightGlue",        True,  "disk",           "disk+lightglue"),
     ("SIFT\n+NN",               True,  "sift",           "NN-ratio"),
 ]
@@ -675,7 +675,7 @@ with col_sfm1:
 
 with col_sfm2:
     if use_hloc:
-        feat_default = st.session_state.get("pl_feature", "superpoint_max")
+        feat_default = st.session_state.get("pl_feature", "superpoint_aachen")
         feat_idx = FEATURE_OPTIONS.index(feat_default) if feat_default in FEATURE_OPTIONS else 0
         feature_type = st.selectbox("特徴点抽出器", FEATURE_OPTIONS, index=feat_idx)
         st.session_state["pl_feature"] = feature_type
