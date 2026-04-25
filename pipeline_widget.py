@@ -82,24 +82,28 @@ def _parse_colmap_substeps(pl: dict) -> list:
         name   = step_names.get(i, f"ステップ{i}")
         status = "done" if i < current_step else ("running" if i == current_step else "waiting")
 
-        cur = items = pct = None
+        cur = items = pct = eta = None
 
         if status in ("done", "running") and i in positions:
             start = positions[i]
             end   = positions.get(i + 1, len(content))
             section = content[start:end]
 
-            # tqdmの進捗: "| N/TOTAL [elapsed<remaining"
-            tqdm_m = re.findall(r'\|\s*(\d+)/(\d+)\s+\[[\d?]', section)
+            # tqdmの進捗: "| N/TOTAL [elapsed<remaining, speed"
+            tqdm_m = re.findall(
+                r'\|\s*(\d+)/(\d+)\s+\[([\d?:]+)<([\d?:hms]+)', section
+            )
             if tqdm_m:
                 cur   = int(tqdm_m[-1][0])
                 items = int(tqdm_m[-1][1])
+                eta   = tqdm_m[-1][3]   # 残り時間文字列
                 pct   = min(cur / items, 1.0) if items > 0 else None
             elif status == "done":
                 pct = 1.0
 
         result.append({"num": i, "total": total_steps, "name": name,
-                        "status": status, "cur": cur, "items": items, "pct": pct})
+                        "status": status, "cur": cur, "items": items,
+                        "pct": pct, "eta": eta})
     return result
 
 
@@ -201,7 +205,10 @@ def _render_substep_bars(substeps: list):
         # 進捗テキスト
         pct_val = s["pct"] if s["pct"] is not None else (1.0 if s["status"] == "done" else 0.0)
         if s["cur"] is not None and s["items"] is not None:
-            detail = f'{s["cur"]:,} / {s["items"]:,} ({pct_val*100:.0f}%)'
+            detail = f'{s["cur"]:,} / {s["items"]:,}  ({pct_val*100:.1f}%)'
+            eta = s.get("eta")
+            if eta and eta not in ("?", "00:00", ""):
+                detail += f'  残り {eta}'
         elif s["status"] == "done":
             detail = "完了"
         else:
@@ -390,8 +397,13 @@ def render_sticky_footer():
         substeps = _parse_colmap_substeps(state)
         running  = next((s for s in substeps if s["status"] == "running"), None)
         if running:
-            sub_detail = (f'{running["cur"]:,}/{running["items"]:,}'
-                          if running["cur"] is not None else "処理中")
+            if running["cur"] is not None:
+                sub_detail = f'{running["cur"]:,}/{running["items"]:,} ({(running["pct"] or 0)*100:.1f}%)'
+                eta = running.get("eta")
+                if eta and eta not in ("?", "00:00", ""):
+                    sub_detail += f' 残り{eta}'
+            else:
+                sub_detail = "処理中"
             detail_label = (f'[{running["num"]}/{running["total"]}] '
                             f'{running["name"]} {sub_detail}')
 
