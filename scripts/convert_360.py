@@ -26,20 +26,23 @@ def equirect_to_perspective(img, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
     f = (out_w / 2) / math.tan(fov / 2)
 
     # 出力ピクセルごとに球面座標を計算
+    # vv: 上端が負・下端が正（画像座標）
+    # y = -vv とすることで、上端が正（空方向）・下端が負（地面方向）に修正
     u = np.linspace(-(out_w - 1) / 2, (out_w - 1) / 2, out_w)
     v = np.linspace(-(out_h - 1) / 2, (out_h - 1) / 2, out_h)
     uu, vv = np.meshgrid(u, v)
 
-    # カメラ座標 → 球面座標
+    # カメラ座標 → 球面座標（Y上向き系）
     x = uu
-    y = vv
+    y = -vv   # 上端=正latitude（空）、下端=負latitude（地面）に修正
     z = np.full_like(x, f)
 
-    # pitch回転（X軸）
+    # pitch回転（X軸、正=上向き）
+    # y2 = y*cp + z*sp, z2 = -y*sp + z*cp で正pitchが上方向になる
     cp, sp = math.cos(pitch), math.sin(pitch)
     x2 = x
-    y2 = y * cp - z * sp
-    z2 = y * sp + z * cp
+    y2 = y * cp + z * sp
+    z2 = -y * sp + z * cp
 
     # yaw回転（Y軸）
     cy, sy = math.cos(yaw), math.sin(yaw)

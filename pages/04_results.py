@@ -417,13 +417,6 @@ if has_output:
 if not images and not _compare_splits:
     st.info("レンダリング画像が見つかりません。render.py を実行すると生成されます。")
 else:
-    # gaussian-splatting の render.py は OpenGL/COLMAP 座標系の差異により
-    # 上下反転した画像を保存するため、表示時に垂直反転して補正する
-    from PIL import Image as _PILImage
-
-    def _img_vflip(path):
-        return _PILImage.open(path).transpose(_PILImage.FLIP_TOP_BOTTOM)
-
     _tab_labels = ["▶ 動画再生", "🖼️ 画像一覧"]
     if _compare_splits:
         _tab_labels.append("🔍 元画像 vs レンダリング")
@@ -449,7 +442,7 @@ else:
                     "ffmpeg", "-y", "-framerate", str(fps_v),
                     "-i", str(tmp_dir / f"frame_%06d{use_imgs[0].suffix}"),
                     # vflip: render.py の上下反転を補正
-                    "-vf", "vflip,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video_path),
                 ], capture_output=True)
                 shutil.rmtree(tmp_dir)
@@ -477,7 +470,7 @@ else:
                 cols = st.columns(cols_per_row)
                 for j, col in enumerate(cols):
                     if i + j < len(images):
-                        col.image(_img_vflip(images[i + j]),
+                        col.image(str(images[i + j]),
                                   caption=images[i + j].name,
                                   use_container_width=True)
 
@@ -531,12 +524,12 @@ else:
                     _col_gt  = _row_cols[_idx * 2]
                     _col_rd  = _row_cols[_idx * 2 + 1]
                     if _gt_path.exists():
-                        _col_gt.image(_img_vflip(_gt_path),
+                        _col_gt.image(str(_gt_path),
                                       caption=f"元画像 {_img_path.name}",
                                       use_container_width=True)
                     else:
                         _col_gt.warning("gt なし")
-                    _col_rd.image(_img_vflip(_img_path),
+                    _col_rd.image(str(_img_path),
                                   caption=f"レンダリング {_img_path.name}",
                                   use_container_width=True)
 
