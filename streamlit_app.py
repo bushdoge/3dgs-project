@@ -40,6 +40,7 @@ pg = st.navigation(
         "🎮 ゲーム": [
             st.Page("pages/07_minigame.py", title="ミニゲーム", icon="⚗️"),
             st.Page("pages/08_pet.py",      title="ガウスくん", icon="🐾"),
+            st.Page("pages/09_poker.py",    title="ポーカー",   icon="🃏"),
         ],
     },
     expanded=True,
