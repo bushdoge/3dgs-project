@@ -301,9 +301,13 @@ with tab_delete:
                                   placeholder=selected_name)
     if st.button("🗑️ 削除する", type="primary",
                  disabled=(confirm_text != selected_name)):
-        shutil.rmtree(selected_exp)
-        st.success(f"`{selected_name}` を削除しました。")
-        st.rerun()
+        import subprocess as _sp
+        result = _sp.run(["rm", "-rf", str(selected_exp)], capture_output=True)
+        if result.returncode == 0:
+            st.success(f"`{selected_name}` を削除しました。")
+            st.rerun()
+        else:
+            st.error(f"削除に失敗しました: {result.stderr.decode()}")
 
 # ── 使い方（詳細） ────────────────────────────────────────────────────────────
 with st.expander("📖 使い方（詳細）", expanded=False):
