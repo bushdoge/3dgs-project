@@ -371,27 +371,35 @@ phase_label = {
     "turn": "Turn", "river": "River", "showdown": "Showdown",
 }.get(phase, "")
 
+def _name_md(icon, name, chips, is_dealer, blind):
+    """名前行のmarkdown（インラインHTMLでバッジを表示）"""
+    d = (' <span style="background:#2a1800;border:1px solid #f0c030;border-radius:3px;'
+         'padding:1px 6px;font-size:0.65rem;color:#f0c030;font-weight:bold;">D</span>'
+         if is_dealer else "")
+    b = (f' <span style="background:#0c1e30;border:1px solid #4a90b8;border-radius:3px;'
+         f'padding:1px 6px;font-size:0.65rem;color:#4a90b8;font-weight:bold;">{blind}</span>')
+    chip_html = (f'<span style="float:right;color:#00cc66;font-weight:bold;">'
+                 f'💰 {chips:,} chips</span>')
+    return f'{icon} **{name}**{d}{b}&nbsp;&nbsp;{chip_html}'
+
 # ── CPU パネル ────────────────────────────────────────────────────────────────
 c_is_dealer = (dealer == "cpu")
 c_blind     = "SB" if c_is_dealer else "BB"
-c_dealer_mk = " 🎯D" if c_is_dealer else ""
 c_hand_lbl  = f"役: {hand_name(chand + comm)}" if (phase == "showdown" and chand and comm) else ""
 
 with st.container(border=True):
-    cc1, cc2 = st.columns([5, 2])
-    with cc1:
-        st.markdown(f"🤖 **CPU**{c_dealer_mk}　`{c_blind}`")
-    with cc2:
-        st.markdown(f"💰 **{cchips:,}** chips")
+    st.markdown(_name_md("🤖", "CPU", cchips, c_is_dealer, c_blind), unsafe_allow_html=True)
     _render_cards(chand, facedown=(phase != "showdown"))
     if c_hand_lbl:
         st.caption(c_hand_lbl)
 
 # ── コミュニティカード ────────────────────────────────────────────────────────
 st.markdown(
-    f"<div style='text-align:center;padding:4px 0;'>"
-    f"<b>🂡 Community　{phase_label}</b>　　🏆 POT: <b>{pot:,}</b>"
-    f"</div>",
+    f'<div style="text-align:center;padding:6px 0 3px;">'
+    f'<span style="color:#4a90b8;letter-spacing:0.12em;">{phase_label}</span>'
+    f'&nbsp;&nbsp;&nbsp;'
+    f'<span style="font-size:1rem;font-weight:bold;">🏆 POT &nbsp;{pot:,}</span>'
+    f'</div>',
     unsafe_allow_html=True,
 )
 _render_community(comm, phase)
@@ -399,15 +407,10 @@ _render_community(comm, phase)
 # ── プレイヤーパネル ──────────────────────────────────────────────────────────
 p_is_dealer = (dealer == "player")
 p_blind     = "SB" if p_is_dealer else "BB"
-p_dealer_mk = " 🎯D" if p_is_dealer else ""
 p_hand_lbl  = f"現在の役: {hand_name(phand + comm)}" if (phand and comm) else ""
 
 with st.container(border=True):
-    pc1, pc2 = st.columns([5, 2])
-    with pc1:
-        st.markdown(f"👤 **あなた**{p_dealer_mk}　`{p_blind}`")
-    with pc2:
-        st.markdown(f"💰 **{pchips:,}** chips")
+    st.markdown(_name_md("👤", "あなた", pchips, p_is_dealer, p_blind), unsafe_allow_html=True)
     _render_cards(phand, highlight=True)
     if p_hand_lbl:
         st.caption(p_hand_lbl)
@@ -482,8 +485,9 @@ else:
                       on_click=player_action, args=("allin",),
                       disabled=(pchips <= 0))
         with a5:
-            st.button("🏳 フォールド", use_container_width=True,
-                      on_click=player_action, args=("fold",))
+            st.button("🏳", use_container_width=True,
+                      on_click=player_action, args=("fold",),
+                      help="フォールド（降りる）")
     else:
         st.caption("🤖 CPU が考えています...")
 
