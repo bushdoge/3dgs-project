@@ -407,17 +407,33 @@ def render_sticky_footer():
             detail_label = (f'[{running["num"]}/{running["total"]}] '
                             f'{running["name"]} {sub_detail}')
 
+    # 最新5行ログを取得
+    import html as _html
+    log_path = state.get("log_path", "")
+    log_lines_html = ""
+    if log_path and Path(log_path).exists():
+        try:
+            raw = Path(log_path).read_text(errors="replace")
+            lines = [l for l in raw.replace("\r", "\n").splitlines() if l.strip()]
+            tail  = lines[-5:] if lines else []
+            log_lines_html = _html.escape("\n".join(tail))
+        except Exception:
+            pass
+
     st.markdown(f"""
 <style>
   #pipeline-sticky-footer {{
     position: fixed; bottom: 0; left: 0; right: 0;
     background: rgba(8, 12, 22, 0.96);
     border-top: 1px solid #1a3a5c;
-    padding: 5px 20px;
+    padding: 4px 20px 5px;
     z-index: 99999;
-    display: flex; align-items: center; gap: 14px;
+    display: flex; flex-direction: column; gap: 3px;
     backdrop-filter: blur(6px);
     font-family: 'Share Tech Mono', monospace;
+  }}
+  #pipeline-sticky-footer .psf-row {{
+    display: flex; align-items: center; gap: 14px;
   }}
   #pipeline-sticky-footer .psf-dot {{
     width: 6px; height: 6px; border-radius: 50%;
@@ -448,16 +464,41 @@ def render_sticky_footer():
     font-size: 0.65rem; color: #2a6080; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; max-width: 300px;
   }}
+  #pipeline-sticky-footer .psf-log {{
+    font-size: 0.62rem;
+  }}
+  #pipeline-sticky-footer .psf-log summary {{
+    color: #2a6080; cursor: pointer; user-select: none;
+    list-style: none; display: inline-flex; align-items: center; gap: 4px;
+  }}
+  #pipeline-sticky-footer .psf-log summary::before {{
+    content: "▶"; font-size: 0.5rem; transition: transform 0.15s;
+  }}
+  #pipeline-sticky-footer .psf-log[open] summary::before {{
+    transform: rotate(90deg);
+  }}
+  #pipeline-sticky-footer .psf-log pre {{
+    margin: 3px 0 2px; padding: 5px 8px;
+    background: #060a14; border: 1px solid #1a3a5c; border-radius: 4px;
+    color: #4a8888; font-size: 0.6rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all; max-height: 8rem; overflow-y: auto;
+  }}
   /* フッターと重ならないようにコンテンツ下余白を確保 */
   .block-container {{ padding-bottom: 2.5rem !important; }}
 </style>
 <div id="pipeline-sticky-footer">
-  <div class="psf-dot"></div>
-  <span class="psf-scene">🚀 {scene}</span>
-  <span class="psf-step">{step_ja}</span>
-  <div class="psf-bar-wrap"><div class="psf-bar"></div></div>
-  <span class="psf-pct">{pct_val:.0f}%</span>
-  <span class="psf-detail">{detail_label}</span>
+  <div class="psf-row">
+    <div class="psf-dot"></div>
+    <span class="psf-scene">🚀 {scene}</span>
+    <span class="psf-step">{step_ja}</span>
+    <div class="psf-bar-wrap"><div class="psf-bar"></div></div>
+    <span class="psf-pct">{pct_val:.0f}%</span>
+    <span class="psf-detail">{detail_label}</span>
+  </div>
+  <details class="psf-log">
+    <summary>📋 最新ログ（5行）</summary>
+    <pre>{log_lines_html if log_lines_html else "（ログなし）"}</pre>
+  </details>
 </div>
 """, unsafe_allow_html=True)
 
