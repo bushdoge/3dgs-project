@@ -390,6 +390,70 @@ if log_files:
 else:
     st.info("ログファイルが見つかりません。")
 
+# ── 元画像 vs レンダリング 比較ビュー ─────────────────────────────────────────
+st.divider()
+st.subheader("🔍 元画像 vs レンダリング 比較")
+st.caption("gaussian-splatting の render.py が出力した gt/（元画像）と renders/（再現画像）を並べて表示します")
+
+_compare_splits = []
+if has_output:
+    for _split in ["test", "train"]:
+        _sdir = exp_path / "output" / _split
+        if _sdir.exists():
+            for _idir in sorted(_sdir.iterdir()):
+                if (_idir / "renders").exists() and (_idir / "gt").exists():
+                    _compare_splits.append((_split, _idir.name))
+
+if not _compare_splits:
+    st.info("比較データが見つかりません。先にレンダリングを実行してください（gt/ と renders/ が必要です）。")
+else:
+    _split_labels = {
+        "test":  "🧪 test（未学習視点）",
+        "train": "🎓 train（学習視点）",
+    }
+    _cmp_options  = [f"{s}/{i}" for s, i in _compare_splits]
+    _cmp_labels   = [f"{_split_labels.get(s, s)} / {i.replace('ours_', 'iter ')}" for s, i in _compare_splits]
+    _cmp_sel      = st.selectbox("split / iteration を選択", _cmp_options,
+                                  format_func=lambda x: _cmp_labels[_cmp_options.index(x)])
+    _sel_split, _sel_iter = _cmp_sel.split("/", 1)
+
+    _renders_dir = exp_path / "output" / _sel_split / _sel_iter / "renders"
+    _gt_dir      = exp_path / "output" / _sel_split / _sel_iter / "gt"
+
+    _render_imgs = sorted(
+        list(_renders_dir.glob("*.png")) + list(_renders_dir.glob("*.jpg"))
+    )
+
+    if not _render_imgs:
+        st.info("レンダリング画像が見つかりません。")
+    else:
+        _n_total = len(_render_imgs)
+        _cmp_col1, _cmp_col2 = st.columns([3, 1])
+        with _cmp_col1:
+            _n_per_page = st.slider("1ページあたりの表示枚数", 1, 10, 4, key="cmp_per_page")
+        with _cmp_col2:
+            _n_pages = max(1, (_n_total + _n_per_page - 1) // _n_per_page)
+            _page    = st.number_input("ページ", min_value=1, max_value=_n_pages,
+                                       value=1, key="cmp_page")
+
+        _start = (_page - 1) * _n_per_page
+        _end   = min(_start + _n_per_page, _n_total)
+        st.caption(f"全 {_n_total} 枚中 {_start + 1}〜{_end} 枚を表示")
+
+        for _img_path in _render_imgs[_start:_end]:
+            _gt_path = _gt_dir / _img_path.name
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                if _gt_path.exists():
+                    st.image(str(_gt_path), caption=f"元画像　{_img_path.name}",
+                             use_container_width=True)
+                else:
+                    st.warning(f"gt が見つかりません: {_img_path.name}")
+            with _c2:
+                st.image(str(_img_path), caption=f"レンダリング　{_img_path.name}",
+                         use_container_width=True)
+
+
 # ── レンダリング画像 ──────────────────────────────────────────────────────────
 st.divider()
 st.subheader("🖼️ レンダリング画像")
