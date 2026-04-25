@@ -298,43 +298,45 @@ if "tx_pchips" not in st.session_state:
     st.session_state.tx_log       = []
     st.session_state.tx_hand_num  = 0
 
-# ─── カード描画ヘルパー ────────────────────────────────────────────────────────
+# ─── カード描画（HTMLはカードのみ、他はStreamlitネイティブ）─────────────────────
 
-def _card_html(rank, suit, highlight=False, facedown=False):
-    if facedown:
-        return (
-            '<div style="background:#0c1520;border:1px solid #1e3348;border-radius:8px;'
-            'width:58px;height:84px;display:inline-flex;align-items:center;'
-            'justify-content:center;flex-shrink:0;">'
-            '<span style="font-size:2rem;opacity:0.6;">🂠</span></div>'
-        )
+def _card_html(rank, suit, highlight=False):
     red   = suit in ("♥", "♦")
-    color = "#ff6060" if red else "#d8eaf8"
-    bg    = "#132840" if highlight else "#0d1e30"
-    bdr   = "2px solid #00ccff" if highlight else "1px solid #1e3348"
-    shd   = "0 0 10px #00ccff55" if highlight else "none"
+    color = "#ff5555" if red else "#d8eaf8"
+    bg    = "#0f2a44" if highlight else "#0c1a28"
+    bdr   = "2px solid #00bbee" if highlight else "1px solid #223344"
     return (
-        f'<div style="background:{bg};border:{bdr};border-radius:8px;'
-        f'width:58px;height:84px;padding:6px 5px;box-sizing:border-box;'
-        f'display:inline-flex;flex-direction:column;align-items:center;'
-        f'justify-content:center;flex-shrink:0;box-shadow:{shd};">'
-        f'<div style="font-size:1.5rem;font-weight:bold;color:{color};line-height:1;">{rank}</div>'
-        f'<div style="font-size:1.3rem;color:{color};line-height:1;margin-top:2px;">{suit}</div>'
+        f'<div style="background:{bg};border:{bdr};border-radius:7px;'
+        f'width:54px;height:78px;display:inline-flex;flex-direction:column;'
+        f'align-items:center;justify-content:center;flex-shrink:0;">'
+        f'<span style="font-size:1.4rem;font-weight:bold;color:{color};line-height:1.1;">{rank}</span>'
+        f'<span style="font-size:1.2rem;color:{color};line-height:1.1;">{suit}</span>'
         f'</div>'
     )
 
-def _cards_row(cards, facedown=False, highlight=False, n_slots=None):
-    parts = []
-    if facedown:
-        parts = [_card_html("", "", facedown=True) for _ in (cards or range(n_slots or 2))]
-    elif cards:
-        parts = [_card_html(r, s, highlight=highlight) for r, s in cards]
-    else:
-        parts = [_card_html("", "", facedown=True) for _ in range(n_slots or 2)]
-    return '<div style="display:flex;gap:7px;align-items:center;">' + "".join(parts) + "</div>"
+def _back_html():
+    return (
+        '<div style="background:#080e18;border:1px solid #1a2d3d;border-radius:7px;'
+        'width:54px;height:78px;display:inline-flex;align-items:center;'
+        'justify-content:center;flex-shrink:0;">'
+        '<span style="font-size:1.8rem;opacity:0.5;">🂠</span>'
+        '</div>'
+    )
 
-def _community_row(comm, phase):
-    # 常に5枚表示。フェーズに応じて公開枚数を変える
+def _render_cards(cards, facedown=False, highlight=False, n=2):
+    """カードをst.markdownで描画する（HTMLはカードのみ）"""
+    parts = []
+    if facedown and cards:
+        parts = [_back_html() for _ in cards]
+    elif cards:
+        parts = [_card_html(r, s, highlight) for r, s in cards]
+    else:
+        parts = [_back_html() for _ in range(n)]
+    html = '<div style="display:flex;gap:6px;">' + "".join(parts) + '</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+def _render_community(comm, phase):
+    """コミュニティカードを常に5枚スロットで描画"""
     n_reveal = {"flop": 3, "turn": 4, "river": 5, "showdown": 5}.get(phase, 0)
     parts = []
     for i in range(5):
@@ -342,46 +344,14 @@ def _community_row(comm, phase):
             r, s = comm[i]
             parts.append(_card_html(r, s))
         else:
-            parts.append(_card_html("", "", facedown=True))
-    return '<div style="display:flex;gap:7px;justify-content:center;">' + "".join(parts) + "</div>"
-
-def _badge(text, fg="#4a90b8", bg="#0d1e2e"):
-    return (
-        f'<span style="border:1px solid {fg};border-radius:4px;padding:1px 6px;'
-        f'font-size:0.62rem;color:{fg};background:{bg};font-weight:bold;'
-        f'font-family:monospace;">{text}</span>'
-    )
-
-def _player_panel(label, chips, hand, is_dealer, blind_tag,
-                  facedown=False, highlight=False, role_label=""):
-    name_col = "#00ccff" if highlight else "#a0bcd4"
-    chip_col = "#00dd77" if highlight else "#60a878"
-    bg       = "linear-gradient(135deg,#0d2035,#0a1828)" if highlight else "linear-gradient(135deg,#0a1520,#080f18)"
-    bdr      = "1px solid #00ccff55" if highlight else "1px solid #1a2e40"
-    d_badge  = _badge("D", "#f0c030", "#1a1000") if is_dealer else ""
-    b_badge  = _badge(blind_tag, "#4a90b8")
-    cards_html = _cards_row(hand, facedown=facedown, highlight=highlight)
-    role_html  = (f'<span style="font-size:0.72rem;color:#3a8888;margin-left:10px;">'
-                  f'{role_label}</span>') if role_label else ""
-    return f"""
-<div style="background:{bg};border:{bdr};border-radius:10px;
-            padding:12px 16px;margin:5px 0;">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-    <span style="font-size:0.9rem;font-weight:bold;color:{name_col};">{label}</span>
-    {d_badge}
-    {b_badge}
-    <span style="margin-left:auto;font-size:0.85rem;color:{chip_col};font-weight:bold;">💰 {chips:,} chips</span>
-  </div>
-  <div style="display:flex;align-items:center;">
-    {cards_html}
-    {role_html}
-  </div>
-</div>"""
+            parts.append(_back_html())
+    html = '<div style="display:flex;gap:6px;justify-content:center;">' + "".join(parts) + '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 # ─── メイン UI ──────────────────────────────────────────────────────────────
 
 st.title("🃏 テキサスホールデム")
-st.caption("1v1  プレイヤー vs CPU  ｜  SB:10 / BB:20  ｜  D = ディーラー（スモールブラインド）")
+st.caption("1v1  プレイヤー vs CPU  |  SB:10 / BB:20")
 
 phase   = st.session_state.tx_phase
 pchips  = st.session_state.tx_pchips
@@ -400,36 +370,45 @@ phase_label = {
 }.get(phase, "")
 
 # ── CPU パネル ────────────────────────────────────────────────────────────────
-c_dealer   = (dealer == "cpu")
-c_hand_lbl = hand_name(chand + comm) if (phase == "showdown" and chand and comm) else ""
-st.markdown(_player_panel(
-    "🤖  CPU", cchips, chand,
-    is_dealer=c_dealer, blind_tag="SB" if c_dealer else "BB",
-    facedown=(phase != "showdown"),
-    role_label=c_hand_lbl,
-), unsafe_allow_html=True)
+c_is_dealer = (dealer == "cpu")
+c_blind     = "SB" if c_is_dealer else "BB"
+c_dealer_mk = " 🎯D" if c_is_dealer else ""
+c_hand_lbl  = f"役: {hand_name(chand + comm)}" if (phase == "showdown" and chand and comm) else ""
+
+with st.container(border=True):
+    cc1, cc2 = st.columns([5, 2])
+    with cc1:
+        st.markdown(f"🤖 **CPU**{c_dealer_mk}　`{c_blind}`")
+    with cc2:
+        st.markdown(f"💰 **{cchips:,}** chips")
+    _render_cards(chand, facedown=(phase != "showdown"))
+    if c_hand_lbl:
+        st.caption(c_hand_lbl)
 
 # ── コミュニティカード ────────────────────────────────────────────────────────
 st.markdown(
-    f'<div style="text-align:center;padding:6px 0 4px;">'
-    f'  <span style="font-size:0.7rem;letter-spacing:0.18em;color:#2a6080;">'
-    f'  {phase_label}</span>'
-    f'  <span style="font-size:0.85rem;font-weight:bold;color:#4a90b8;margin-left:16px;">'
-    f'  POT &nbsp; {pot:,}</span>'
-    f'</div>',
+    f"<div style='text-align:center;padding:4px 0;'>"
+    f"<b>🂡 Community　{phase_label}</b>　　🏆 POT: <b>{pot:,}</b>"
+    f"</div>",
     unsafe_allow_html=True,
 )
-st.markdown(_community_row(comm, phase), unsafe_allow_html=True)
+_render_community(comm, phase)
 
 # ── プレイヤーパネル ──────────────────────────────────────────────────────────
-p_dealer   = (dealer == "player")
-p_hand_lbl = hand_name(phand + comm) if (phand and comm) else ""
-st.markdown(_player_panel(
-    "👤  あなた", pchips, phand,
-    is_dealer=p_dealer, blind_tag="SB" if p_dealer else "BB",
-    highlight=True,
-    role_label=p_hand_lbl,
-), unsafe_allow_html=True)
+p_is_dealer = (dealer == "player")
+p_blind     = "SB" if p_is_dealer else "BB"
+p_dealer_mk = " 🎯D" if p_is_dealer else ""
+p_hand_lbl  = f"現在の役: {hand_name(phand + comm)}" if (phand and comm) else ""
+
+with st.container(border=True):
+    pc1, pc2 = st.columns([5, 2])
+    with pc1:
+        st.markdown(f"👤 **あなた**{p_dealer_mk}　`{p_blind}`")
+    with pc2:
+        st.markdown(f"💰 **{pchips:,}** chips")
+    _render_cards(phand, highlight=True)
+    if p_hand_lbl:
+        st.caption(p_hand_lbl)
 
 st.divider()
 
@@ -447,22 +426,24 @@ if phase in ("idle", "showdown"):
     if pchips <= 0:
         st.error("チップがなくなりました！")
         if st.button("🔄 リセット（各 1,000 チップ）", use_container_width=True):
-            for k, v in [("tx_pchips",1000),("tx_cchips",1000),
-                         ("tx_phase","idle"),("tx_result",None)]:
-                setattr(st.session_state, k, v)
+            st.session_state.tx_pchips = 1000
+            st.session_state.tx_cchips = 1000
+            st.session_state.tx_phase  = "idle"
+            st.session_state.tx_result = None
             st.rerun()
     elif cchips <= 0:
         st.success("🏆 CPUのチップがなくなりました！完全勝利！")
         if st.button("🔄 リセット（各 1,000 チップ）", use_container_width=True):
-            for k, v in [("tx_pchips",1000),("tx_cchips",1000),
-                         ("tx_phase","idle"),("tx_result",None)]:
-                setattr(st.session_state, k, v)
+            st.session_state.tx_pchips = 1000
+            st.session_state.tx_cchips = 1000
+            st.session_state.tx_phase  = "idle"
+            st.session_state.tx_result = None
             st.rerun()
     else:
         next_d  = "cpu" if dealer == "player" else "player"
         next_sb = "あなた" if next_d == "player" else "CPU"
         if st.button(
-            f"🃏  次のハンドをディール  ─  次の SB: {next_sb}",
+            f"🃏  次のハンドをディール　（次の SB / D: {next_sb}）",
             type="primary", use_container_width=True,
         ):
             st.session_state.tx_dealer = next_d
@@ -471,17 +452,12 @@ if phase in ("idle", "showdown"):
 
 else:
     if not st.session_state.tx_p_acted:
-        # コール金額の案内
         if to_call > 0:
-            st.markdown(
-                f'<div style="font-size:0.8rem;color:#f0a040;margin-bottom:4px;">'
-                f'⚠️ コールに必要: <b>{to_call} chips</b></div>',
-                unsafe_allow_html=True,
-            )
+            st.warning(f"コールに必要: **{to_call} chips**")
 
         a1, a2, a3, a4, a5 = st.columns([2, 2, 2, 2, 1])
-        half_pot = max(BB, pot // 2)
-        full_pot = max(BB, pot)
+        half_pot  = max(BB, pot // 2)
+        full_pot  = max(BB, pot)
         can_raise = pchips > to_call
 
         with a1:
@@ -504,9 +480,9 @@ else:
                       on_click=player_action, args=("allin",),
                       disabled=(pchips <= 0))
         with a5:
-            st.button("🏳", use_container_width=True,
+            st.button("🏳 折", use_container_width=True,
                       on_click=player_action, args=("fold",),
-                      help="フォールド")
+                      help="フォールド（降りる）")
     else:
         st.caption("🤖 CPU が考えています...")
 
