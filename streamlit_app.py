@@ -36,6 +36,7 @@ pg = st.navigation(
             st.Page("pages/04_results.py",            title="結果確認",   icon="🖼️"),
             st.Page("pages/05_compare.py",            title="実験比較",   icon="📊"),
             st.Page("pages/06_experiment_manager.py", title="実験管理",   icon="🗂️"),
+            st.Page("pages/10_ply_viewer.py",         title="PLYビューア", icon="🔭"),
         ],
         "🎮 ゲーム": [
             st.Page("pages/07_minigame.py", title="ミニゲーム", icon="⚗️"),
