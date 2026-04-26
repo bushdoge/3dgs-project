@@ -3,13 +3,11 @@
 
 import json
 import os
-import re
 import signal
 import sys
 import subprocess
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -304,78 +302,7 @@ else:
         st.rerun()
 
 st.divider()
-
-# ── キュー追加フォーム ────────────────────────────────────────────────────────
-st.subheader("➕ 実験をキューに追加")
-
-data_dir   = Path("/workspace/data")
-video_files = []
-for subdir in ("360movies", "movies"):
-    for ext in ("*.mp4", "*.mov", "*.avi", "*.mkv"):
-        video_files += [str(p.relative_to("/workspace")) for p in (data_dir / subdir).rglob(ext)]
-video_files = sorted(video_files)
-
-if not video_files:
-    st.warning("data/ に動画ファイルが見つかりません。")
-    st.stop()
-
-with st.form("add_job_form"):
-    fa, fb = st.columns(2)
-    with fa:
-        sel_video = st.selectbox("動画ファイル", video_files)
-    with fb:
-        custom_suffix = st.text_input("実験名サフィックス（空欄で動画名）", placeholder="例: trial01")
-
-    is_360 = st.checkbox("360度動画")
-    fps    = st.number_input("抽出 FPS", min_value=0.1, max_value=30.0, value=2.0, step=0.5)
-
-    fc, fd = st.columns(2)
-    with fc:
-        use_hloc = st.checkbox("HLoc を使用")
-        camera_model = st.selectbox("カメラモデル（COLMAP）",
-                                    ["OPENCV","PINHOLE","SIMPLE_RADIAL"],
-                                    disabled=use_hloc)
-    with fd:
-        iterations = st.number_input("学習ステップ数", min_value=1000, max_value=100000,
-                                     value=30000, step=1000)
-        use_eval   = st.checkbox("--eval（train/test 分割）", value=False)
-
-    submitted = st.form_submit_button("➕ キューに追加", type="primary", use_container_width=True)
-
-if submitted and sel_video:
-    video_path  = f"/workspace/{sel_video}"
-    scene_name  = Path(video_path).stem
-    suffix      = custom_suffix.strip() or scene_name
-    exp_name    = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{suffix}"
-
-    new_job = {
-        "id":           str(uuid.uuid4())[:8],
-        "exp_name":     exp_name,
-        "exp_dir":      str(Path("/workspace/experiments") / exp_name),
-        "status":       "pending",
-        "current_step": "",
-        "log_path":     "",
-        "config": {
-            "video_path":      video_path,
-            "fps":             fps,
-            "is_360":          is_360,
-            "use_hloc":        use_hloc,
-            "camera_model":    camera_model,
-            "feature_type":    "superpoint_aachen",
-            "matcher_type":    "superpoint+lightglue",
-            "pair_method":     "exhaustive",
-            "retrieval_model": "netvlad",
-            "num_matched":     20,
-            "iterations":      int(iterations),
-            "save_iterations": [7000, int(iterations)],
-            "test_iterations": [1000, 3000, 7000, 15000, int(iterations)],
-            "eval":            use_eval,
-        },
-    }
-    st.session_state.bq_queue.append(new_job)
-    _save_queue(st.session_state.bq_queue)
-    st.success(f"「{exp_name}」をキューに追加しました。")
-    st.rerun()
+st.info("➕ 実験の追加は「🚀 Pipeline Runner」ページの「📋 バッチキューに追加」ボタンから行えます。")
 
 # ─── 固定フッター ─────────────────────────────────────────────────────────────
 try:

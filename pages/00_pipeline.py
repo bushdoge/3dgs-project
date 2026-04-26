@@ -821,6 +821,68 @@ st.session_state["pl_resolution"] = resolution
 
 st.divider()
 
+# ── キューに追加 ──────────────────────────────────────────────────────────────
+import json as _json, uuid as _uuid
+
+BATCH_QUEUE_FILE = "/workspace/tmp/batch_queue.json"
+
+def _load_bq():
+    try:
+        p = Path(BATCH_QUEUE_FILE)
+        return _json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    except Exception:
+        return []
+
+def _save_bq(q):
+    Path(BATCH_QUEUE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(BATCH_QUEUE_FILE).write_text(_json.dumps(q, ensure_ascii=False, indent=2), encoding="utf-8")
+
+_bq = _load_bq()
+_pending = sum(1 for j in _bq if j["status"] == "pending")
+
+if st.button(
+    f"📋 バッチキューに追加　（現在 {_pending} 件）",
+    disabled=not (video_path and exp_name),
+    use_container_width=True,
+):
+    if not os.path.exists(video_path):
+        st.error(f"動画ファイルが見つかりません: {video_path}")
+    else:
+        _new_job = {
+            "id":           str(_uuid.uuid4())[:8],
+            "exp_name":     exp_name,
+            "exp_dir":      experiment_dir,
+            "status":       "pending",
+            "current_step": "",
+            "log_path":     "",
+            "config": {
+                "video_path":      video_path,
+                "fps":             float(fps),
+                "is_360":          is_360,
+                "fov":             fov_val,
+                "out_w":           out_w_val,
+                "out_h":           out_h_val,
+                "angles":          sel_angles,
+                "use_hloc":        use_hloc,
+                "camera_model":    camera_model,
+                "feature_type":    feature_type,
+                "matcher_type":    matcher_type,
+                "pair_method":     pair_method,
+                "retrieval_model": retrieval_model,
+                "num_matched":     num_matched,
+                "iterations":      int(iterations),
+                "save_iterations": save_iters or [7000, int(iterations)],
+                "test_iterations": test_iters or [1000, 3000, 7000, 15000, int(iterations)],
+                "eval":            use_eval,
+                "resolution":      resolution,
+            },
+        }
+        _bq.append(_new_job)
+        _save_bq(_bq)
+        st.success(f"「{exp_name}」をバッチキューに追加しました。「🗂️ バッチ実験」ページから実行できます。")
+
+st.divider()
+
 st.error("⚠️ 学習はGPUを長時間占有します。他の処理が動いていないか確認してください。")
 confirm = st.checkbox("確認しました。パイプラインを開始します。")
 
