@@ -4,6 +4,7 @@
 import re
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -209,12 +210,26 @@ else:
 
     if chart_series:
         all_iters = sorted(set(it for vals in chart_series.values() for it in vals))
-        chart_df = pd.DataFrame(
-            {name: [vals.get(it) for it in all_iters] for name, vals in chart_series.items()},
-            index=all_iters,
+        rows_long = [
+            {"iteration": it, "系列": name, metric_col: vals.get(it)}
+            for name, vals in chart_series.items()
+            for it in all_iters
+            if vals.get(it) is not None
+        ]
+        chart_df_long = pd.DataFrame(rows_long)
+        chart = (
+            alt.Chart(chart_df_long)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("iteration:Q", title="Iteration",
+                         axis=alt.Axis(grid=True)),
+                y=alt.Y(f"{metric_col}:Q", title=metric_col,
+                         axis=alt.Axis(grid=True)),
+                color=alt.Color("系列:N", legend=alt.Legend(title="")),
+            )
+            .properties(height=320)
         )
-        chart_df.index.name = "iteration"
-        st.line_chart(chart_df)
+        st.altair_chart(chart, use_container_width=True)
 
         st.markdown("**最良値サマリー**")
         higher_is_better = METRIC_HIGHER_IS_BETTER.get(metric_col, True)
