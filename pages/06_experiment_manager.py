@@ -257,7 +257,7 @@ with tab_config:
             st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
         with st.expander("生YAML", expanded=False):
             st.code(config_path.read_text(encoding="utf-8", errors="replace"), language="yaml")
-    else:
+    elif not cfg_args_list:
         st.info("config.yaml が見つかりません。")
 
     # ── cfg_args ──
