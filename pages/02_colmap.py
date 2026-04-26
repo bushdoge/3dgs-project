@@ -358,6 +358,34 @@ if st.button(btn_label, type="primary", disabled=not source_path):
         }
         st.rerun()
 
+# ── キューに追加 ──────────────────────────────────────────────────────────────
+import sys as _sys; _sys.path.insert(0, "/workspace")
+from queue_helper import add_to_queue as _add_q, pending_size as _psize
+
+if st.button(
+    f"📋 バッチキューに追加（待ち: {_psize()} 件）",
+    disabled=not source_path,
+    use_container_width=True,
+):
+    method = "HLoc" if use_hloc else f"COLMAP({camera_model})"
+    _add_q(
+        job_type="colmap",
+        label=f"姿勢推定 {method}",
+        exp_name=Path(source_path).name,
+        exp_dir=source_path,
+        config={
+            "use_hloc": use_hloc,
+            "camera_model": camera_model,
+            "use_gpu": use_gpu,
+            "feature_type": feature_type if use_hloc else "sift",
+            "matcher_type": matcher_type if use_hloc else "",
+            "pair_method": pair_method,
+            "retrieval_model": retrieval_model,
+            "num_matched": num_matched,
+        },
+    )
+    st.success("バッチキューに追加しました。")
+
 # ── 結果の可視化 ──────────────────────────────────────────────────────────────
 if source_path:
     sparse_dir = Path(source_path) / "sparse" / "0"

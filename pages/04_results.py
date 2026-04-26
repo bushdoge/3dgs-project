@@ -374,6 +374,29 @@ else:
         with st.expander("実行コマンド（プレビュー）", expanded=False):
             st.code(cmd_preview, language="bash")
 
+        # キューに追加
+        import sys as _sys; _sys.path.insert(0, "/workspace")
+        from queue_helper import add_to_queue as _add_q, pending_size as _psize
+        if st.button(
+            f"📋 バッチキューに追加（待ち: {_psize()} 件）",
+            disabled=(skip_train and skip_test),
+            use_container_width=True,
+        ):
+            _add_q(
+                job_type="render",
+                label=f"レンダリング {sel_iter}",
+                exp_name=exp_path.name,
+                exp_dir=str(exp_path),
+                config={
+                    "model_path":       model_path,
+                    "iteration":        int(iter_arg) if iter_arg != "-1" else -1,
+                    "skip_train":       skip_train,
+                    "skip_test":        skip_test,
+                    "white_background": white_bg,
+                },
+            )
+            st.success("バッチキューに追加しました。")
+
         st.warning("⚠️ レンダリングはGPUを使用します。学習中は実行しないでください。")
         if st.button("🎬 レンダリング開始", type="primary",
                      disabled=(skip_train and skip_test)):

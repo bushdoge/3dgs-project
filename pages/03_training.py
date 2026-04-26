@@ -349,6 +349,31 @@ if st.button("▶ 学習を開始", type="primary",
 
         st.rerun()
 
+# ── キューに追加 ──────────────────────────────────────────────────────────────
+import sys as _sys; _sys.path.insert(0, "/workspace")
+from queue_helper import add_to_queue as _add_q, pending_size as _psize
+
+if st.button(
+    f"📋 バッチキューに追加（待ち: {_psize()} 件）",
+    disabled=not (source_path and model_path),
+    use_container_width=True,
+):
+    _add_q(
+        job_type="train",
+        label=f"学習 {iterations:,}iter",
+        exp_name=Path(source_path).name,
+        exp_dir=source_path,
+        config={
+            "model_path":      model_path,
+            "iterations":      int(iterations),
+            "save_iterations": [int(s) for s in save_list] if save_list else [7000, int(iterations)],
+            "test_iterations": [int(s) for s in test_list] if test_list else [1000, 7000, 15000, int(iterations)],
+            "eval":            use_eval,
+            "resolution":      resolution,
+        },
+    )
+    st.success("バッチキューに追加しました。")
+
 # ── 使い方（詳細） ────────────────────────────────────────────────────────────
 with st.expander("📖 使い方（詳細）", expanded=False):
     st.markdown("""

@@ -325,6 +325,33 @@ if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
         }
         st.rerun()
 
+# ── キューに追加 ──────────────────────────────────────────────────────────────
+sys.path.insert(0, "/workspace")
+from queue_helper import add_to_queue, pending_size as _psize
+
+if st.button(
+    f"📋 バッチキューに追加（待ち: {_psize()} 件）",
+    disabled=not can_run,
+    use_container_width=True,
+):
+    if not os.path.exists(input_path):
+        st.error(f"ファイルが見つかりません: {input_path}")
+    else:
+        add_to_queue(
+            job_type="extract",
+            label=f"フレーム抽出 {fps}fps",
+            exp_name=Path(experiment_dir).name,
+            exp_dir=experiment_dir,
+            config={
+                "video_path": input_path,
+                "fps": float(fps),
+                "is_360": is_360,
+                "fov": fov, "out_w": out_w, "out_h": out_h,
+                "angles": sel_angles,
+            },
+        )
+        st.success("バッチキューに追加しました。")
+
 # ── 使い方（詳細） ────────────────────────────────────────────────────────────
 with st.expander("📖 使い方（詳細）", expanded=False):
     st.markdown("""
