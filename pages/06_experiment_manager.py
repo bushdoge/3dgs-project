@@ -129,8 +129,8 @@ if not selected_name:
 
 selected_exp = EXPERIMENTS_DIR / selected_name
 
-tab_note, tab_logs, tab_config, tab_dl, tab_delete = st.tabs(
-    ["📝 メモ編集", "📋 ログ閲覧", "⚙️ 設定確認", "📦 ダウンロード", "🗑️ フォルダ削除"]
+tab_note, tab_logs, tab_config, tab_dl, tab_rename, tab_delete = st.tabs(
+    ["📝 メモ編集", "📋 ログ閲覧", "⚙️ 設定確認", "📦 ダウンロード", "✏️ 名前変更", "🗑️ フォルダ削除"]
 )
 
 # ── メモ編集タブ ─────────────────────────────────────────────────────────────
@@ -352,6 +352,46 @@ with tab_dl:
                 mime="application/zip",
                 key="em_dl_download",
             )
+
+# ── 名前変更タブ ──────────────────────────────────────────────────────────────
+with tab_rename:
+    st.caption("実験フォルダ名を変更します。メモ・ログ・学習結果はそのまま引き継がれます。")
+    new_name = st.text_input(
+        "新しいフォルダ名",
+        value=selected_name,
+        key="rename_input",
+        help="日時プレフィックス（例: 20260421_）は任意で変更できます。",
+    )
+    new_name = new_name.strip()
+
+    # バリデーション
+    rename_error = None
+    if not new_name:
+        rename_error = "フォルダ名を入力してください。"
+    elif new_name == selected_name:
+        rename_error = "現在と同じ名前です。"
+    elif "/" in new_name or "\\" in new_name or ".." in new_name:
+        rename_error = "使用できない文字が含まれています（/ \\ ..）"
+    elif (EXPERIMENTS_DIR / new_name).exists():
+        rename_error = f"「{new_name}」はすでに存在します。"
+
+    if rename_error:
+        st.warning(rename_error)
+    else:
+        st.info(f"`{selected_name}` → `{new_name}`")
+
+    if st.button("✏️ 名前を変更する", type="primary",
+                 disabled=(rename_error is not None)):
+        import subprocess as _sp
+        result = _sp.run(
+            ["mv", str(selected_exp), str(EXPERIMENTS_DIR / new_name)],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            st.success(f"✅ `{selected_name}` → `{new_name}` に変更しました。")
+            st.rerun()
+        else:
+            st.error(f"変更に失敗しました: {result.stderr.decode()}")
 
 # ── 削除タブ ─────────────────────────────────────────────────────────────────
 with tab_delete:
