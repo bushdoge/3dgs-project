@@ -76,10 +76,14 @@ def cpu_decide(hole, community, to_call, pot, chips, phase):
         return "check", 0
     else:
         pot_odds = to_call / max(pot + to_call, 1)
-        if eff_str > 0.78:
+        if eff_str > 0.75:
             raise_amt = min(max(to_call, int(pot * 0.8)), chips)
             return "raise", raise_amt
-        if eff_str > pot_odds + 0.08:
+        # 小さいベット（ポットの35%以下）はペア以上なら基本コール
+        if to_call <= pot * 0.35 and eff_str >= 1 / 9:
+            return "call", to_call
+        # インプライドオッズを加味してポットオッズの60%が基準
+        if eff_str > pot_odds * 0.60:
             return "call", to_call
         return "fold", 0
 
