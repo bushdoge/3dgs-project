@@ -32,8 +32,6 @@ def _save_queue(q: list):
 
 # ─── セッション初期化 ──────────────────────────────────────────────────────────
 
-if "bq_queue"  not in st.session_state:
-    st.session_state.bq_queue   = _load_queue()
 if "bq_active" not in st.session_state:
     st.session_state.bq_active  = False
 if "bq_proc"   not in st.session_state:
@@ -41,9 +39,15 @@ if "bq_proc"   not in st.session_state:
 if "bq_pid"    not in st.session_state:
     st.session_state.bq_pid     = None
 if "bq_step"   not in st.session_state:
-    st.session_state.bq_step    = "idle"   # idle/extracting/colmap/training
+    st.session_state.bq_step    = "idle"
 if "bq_log"    not in st.session_state:
     st.session_state.bq_log     = None
+
+# 実行中でない時は常にファイルから再読み込みして他ページの変更を反映する
+if not st.session_state.bq_active:
+    st.session_state.bq_queue = _load_queue()
+elif "bq_queue" not in st.session_state:
+    st.session_state.bq_queue = _load_queue()
 
 # ─── ステップ進行ロジック ──────────────────────────────────────────────────────
 
