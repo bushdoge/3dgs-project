@@ -28,6 +28,7 @@ pg = st.navigation(
         ],
         "🧪 パイプライン": [
             st.Page("pages/00_pipeline.py",         title="Pipeline Runner", icon="🚀"),
+            st.Page("pages/11_batch.py",            title="バッチ実験",       icon="🗂️"),
             st.Page("pages/01_frame_extraction.py", title="フレーム抽出",    icon="🎞️"),
             st.Page("pages/02_colmap.py",           title="姿勢推定",         icon="📷"),
             st.Page("pages/03_training.py",         title="3DGS学習",         icon="🧠"),
@@ -36,7 +37,6 @@ pg = st.navigation(
             st.Page("pages/04_results.py",            title="結果確認",   icon="🖼️"),
             st.Page("pages/05_compare.py",            title="実験比較",   icon="📊"),
             st.Page("pages/06_experiment_manager.py", title="実験管理",   icon="🗂️"),
-            st.Page("pages/10_ply_viewer.py",         title="PLYビューア", icon="🔭"),
         ],
         "🎮 ゲーム": [
             st.Page("pages/07_minigame.py", title="ミニゲーム", icon="⚗️"),
