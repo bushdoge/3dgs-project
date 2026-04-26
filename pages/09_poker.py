@@ -47,43 +47,51 @@ def best_score(cards):
 def hand_name(cards):
     return HAND_NAMES[best_score(cards)[0]] if len(cards) >= 5 else ""
 
-# ─── CPU AI ──────────────────────────────────────────────────────────────────
+# ─── CPU AI（Determinized MCTS） ─────────────────────────────────────────────
+# 残りデッキからプレイヤーの手札候補をサンプリングし、
+# ショーダウンまでシミュレーションして勝率を推定する。
 
-def _preflop_strength(hole):
-    rv = sorted([RANK_V[r] for r, s in hole], reverse=True)
-    suited = hole[0][1] == hole[1][1]
-    pair   = rv[0] == rv[1]
-    s = (rv[0] + rv[1]) / 28.0
-    if pair:   s += 0.25
-    if suited: s += 0.06
-    if rv[0] - rv[1] <= 1 and not pair: s += 0.04
-    return min(s, 1.0)
+N_MCTS = 120  # サンプリング数（増やすほど精度↑・速度↓）
 
-def _postflop_strength(hole, community):
-    if not community: return _preflop_strength(hole)
-    return best_score(hole + community)[0] / 9.0
-
-def cpu_decide(hole, community, to_call, pot, chips, phase):
-    strength  = _postflop_strength(hole, community)
-    bluffing  = random.random() < 0.10
-    eff_str   = min(1.0, strength + (0.3 if bluffing else 0.0))
+def mcts_cpu_decide(cpu_hole, community, unknown_cards, to_call, pot, chips):
+    """
+    unknown_cards: CPU視点で不明なカード（残りデッキ＋プレイヤーの手札）
+    """
     if chips <= 0:
         return ("check" if to_call == 0 else "call"), 0
+
+    deck = list(unknown_cards)
+    n_board_needed = 5 - len(community)
+    wins = 0.0
+
+    for _ in range(N_MCTS):
+        random.shuffle(deck)
+        player_hole = deck[:2]
+        board = list(community) + deck[2: 2 + n_board_needed]
+
+        cpu_sc  = best_score(cpu_hole + board)
+        play_sc = best_score(player_hole + board)
+
+        if cpu_sc > play_sc:
+            wins += 1.0
+        elif cpu_sc == play_sc:
+            wins += 0.5
+
+    win_rate = wins / N_MCTS
+
     if to_call == 0:
-        if eff_str > 0.65:
+        if win_rate > 0.62:
             raise_amt = min(max(BB, int(pot * 0.75)), chips)
             return "raise", raise_amt
         return "check", 0
     else:
         pot_odds = to_call / max(pot + to_call, 1)
-        if eff_str > 0.75:
-            raise_amt = min(max(to_call, int(pot * 0.8)), chips)
+        # 勝率が高ければレイズ
+        if win_rate > 0.70:
+            raise_amt = min(max(to_call, int(pot * 0.70)), chips)
             return "raise", raise_amt
-        # 小さいベット（ポットの35%以下）はペア以上なら基本コール
-        if to_call <= pot * 0.35 and eff_str >= 1 / 9:
-            return "call", to_call
-        # インプライドオッズを加味してポットオッズの60%が基準
-        if eff_str > pot_odds * 0.60:
+        # ポットオッズ × 0.78 以上ならコール（インプライドオッズ加味）
+        if win_rate > pot_odds * 0.78:
             return "call", to_call
         return "fold", 0
 
@@ -184,10 +192,15 @@ def _showdown():
 
 def _cpu_act():
     to_call = max(0, st.session_state.tx_p_bet_r - st.session_state.tx_c_bet_r)
-    action, extra = cpu_decide(
-        st.session_state.tx_chand, st.session_state.tx_community,
-        to_call, st.session_state.tx_pot,
-        st.session_state.tx_cchips, st.session_state.tx_phase,
+    # CPUが知らないカード = 残りデッキ + プレイヤーの手札（CPU視点では不明）
+    unknown = st.session_state.tx_deck + st.session_state.tx_phand
+    action, extra = mcts_cpu_decide(
+        st.session_state.tx_chand,
+        st.session_state.tx_community,
+        unknown,
+        to_call,
+        st.session_state.tx_pot,
+        st.session_state.tx_cchips,
     )
     if action == "fold":
         _log("CPU: フォールド")
