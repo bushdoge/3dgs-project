@@ -26,74 +26,33 @@ def _extract_running():
     return p is not None and p.poll() is None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  実行中 / 完了ビュー
-# ════════════════════════════════════════════════════════════════════════════
-if _extract_running() or (
-    st.session_state.extract_proc is not None
-    and st.session_state.extract_proc.poll() is not None
-):
-    proc    = st.session_state.extract_proc
-    running = proc.poll() is None
-
-    st.title("🎞️ フレーム抽出")
-    if running:
-        st.markdown('<span style="color:#00cc66">● 実行中</span>', unsafe_allow_html=True)
-    elif proc.returncode == 0:
-        st.success("✅ 抽出完了！")
-    else:
-        st.error(f"❌ エラーで終了しました（終了コード: {proc.returncode}）")
-
-    log_path = Path(st.session_state.extract_log_path or "")
-    log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
-
-    # 進捗パース
-    total_m  = re.search(r'PROGRESS_TOTAL (\d+)', log_text)
-    prog_m   = re.findall(r'PROGRESS (\d+)/(\d+)', log_text)
-    frame360 = re.findall(r'\[(\d+)/(\d+)\]', log_text)
-
-    if total_m and prog_m:
-        tot = int(total_m.group(1))
-        cur = int(prog_m[-1][0])
-        st.progress(min(cur / max(tot, 1), 1.0), text=f"フレーム抽出 {cur} / {tot} 枚")
-    elif frame360:
-        cur, tot = int(frame360[-1][0]), int(frame360[-1][1])
-        if tot > 0:
-            st.progress(min(cur / tot, 1.0), text=f"360度変換 {cur} / {tot} フレーム")
-
-    with st.expander("📋 ログ（末尾）", expanded=False):
-        lines = [l for l in log_text.replace("\r", "\n").split("\n") if l.strip()]
-        st.code("\n".join(lines[-30:]) or "（まだログがありません）", language=None)
-
-    st.divider()
-    c1, _ = st.columns([1, 5])
-    with c1:
-        if running:
-            if st.button("⏹ 中断", type="secondary"):
-                try:
-                    os.kill(proc.pid, signal.SIGTERM)
-                except Exception:
-                    pass
-                st.session_state.extract_proc = None
-                st.session_state.pop("active_task", None)
-                st.rerun()
-        else:
-            if st.button("← 設定に戻る"):
-                st.session_state.extract_proc = None
-                st.session_state.pop("active_task", None)
-                st.rerun()
-
-    if running:
+# ── 実行ステータスバナー（常時表示） ──────────────────────────────────────────
+_proc = st.session_state.extract_proc
+if _proc is not None:
+    _running = _proc.poll() is None
+    if _running:
+        _ba, _bb = st.columns([5, 1])
+        _ba.info(f"🔄 フレーム抽出実行中　｜　詳細は「🗂️ バッチキュー」ページで確認できます")
+        if _bb.button("⏹ 中断", key="fe_stop"):
+            try: os.kill(_proc.pid, signal.SIGTERM)
+            except Exception: pass
+            st.session_state.extract_proc = None
+            st.session_state.pop("active_task", None)
+            sys.path.insert(0, "/workspace")
+            from queue_helper import clear_active_task_file as _clf; _clf()
+            st.rerun()
         time.sleep(2)
         st.rerun()
-
-    try:
-        from pipeline_widget import render_sticky_footer
-        render_sticky_footer()
-    except Exception:
-        pass
-    st.stop()
-
+    elif _proc.returncode == 0:
+        st.success("✅ フレーム抽出完了！次は「📷 姿勢推定」ページへ。")
+        if st.button("✕ クリア", key="fe_clear"):
+            st.session_state.extract_proc = None
+            st.rerun()
+    else:
+        st.error(f"❌ エラーで終了しました（終了コード: {_proc.returncode}）")
+        if st.button("✕ クリア", key="fe_clear_err"):
+            st.session_state.extract_proc = None
+            st.rerun()
 
 st.title("🎞️ フレーム抽出")
 st.caption("動画ファイルから画像を切り出します。360度動画の場合はピンホール変換オプションを使用してください。")
@@ -324,6 +283,8 @@ if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
             "start_time": time.time(),
             "is_360":     is_360,
         }
+        from queue_helper import save_active_task_file as _satf
+        _satf(st.session_state.active_task)
         st.rerun()
 
 # ── キューに追加 ──────────────────────────────────────────────────────────────

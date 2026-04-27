@@ -59,104 +59,39 @@ def parse_log(log_text):
     return losses, eval_records, cleaned
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  学習中の進捗ビュー
-# ════════════════════════════════════════════════════════════════════════════
-if is_training() or (
-    st.session_state.train_proc is not None
-    and st.session_state.train_proc.poll() is not None
-):
-    proc = st.session_state.train_proc
-    running = proc.poll() is None
-
-    if running:
-        st.title("🧠 3DGS 学習実行")
-        st.markdown(
-            '<span style="color:#00cc66">● 学習中</span>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.title("🧠 3DGS 学習実行")
-        if proc.returncode == 0:
-            st.success("✅ 学習が完了しました！")
-        else:
-            st.error(f"❌ エラーで終了しました（終了コード: {proc.returncode}）")
-
-    # ── ログ読み込み ──
-    log_path = Path(st.session_state.train_log_path)
-    log_text = ""
-    if log_path.exists():
-        log_text = log_path.read_text(errors="replace")
-
-    losses, eval_records, cleaned_log = parse_log(log_text)
-
-    # ── 進捗バー ──
-    iters = st.session_state.train_iterations
-    if losses:
-        current_iter = 0
-        for line in reversed(cleaned_log.split("\n")):
-            m2 = re.search(r"(\d+)/" + str(iters), line)
-            if m2:
-                current_iter = int(m2.group(1))
-                break
-        if current_iter > 0:
-            st.progress(min(current_iter / iters, 1.0),
-                        text=f"{current_iter:,} / {iters:,} ステップ")
-
-    # ── グラフ ──
-    import pandas as pd
-
-    if losses:
-        st.subheader("📉 Loss（直近500点）")
-        st.line_chart({"Loss": losses[-500:]}, height=180)
-
-    if eval_records:
-        df_eval = pd.DataFrame(eval_records)
-        metrics_available = [c for c in ["PSNR", "SSIM", "LPIPS", "L1"] if c in df_eval.columns]
-        col_charts = st.columns(len(metrics_available))
-        icons = {"PSNR": "📈", "SSIM": "📊", "LPIPS": "📉", "L1": "📉"}
-        for col, metric in zip(col_charts, metrics_available):
-            with col:
-                st.subheader(f"{icons.get(metric,'📊')} {metric}")
-                pivot = df_eval.pivot(index="iteration", columns="split", values=metric)
-                st.line_chart(pivot, height=180)
-    else:
-        st.caption("評価タイミング（test_iterations）になるとグラフが表示されます")
-
-    # ── 最新ログ ──
-    with st.expander("📋 学習ログ（末尾）", expanded=False):
-        tail = "\n".join(cleaned_log.split("\n")[-80:])
-        st.text(tail or "（まだログがありません）")
-
-    # ── 操作ボタン ──
-    st.divider()
-    col_b1, col_b2 = st.columns([1, 5])
-    with col_b1:
-        if running:
-            if st.button("⏹ 学習を中断", type="secondary"):
-                try:
-                    os.kill(proc.pid, signal.SIGTERM)
-                except Exception:
-                    pass
-                st.session_state.train_proc = None
-                st.session_state.pop("active_task", None)
-                st.rerun()
-        else:
+# ── 実行ステータスバナー ───────────────────────────────────────────────────────
+_tproc = st.session_state.train_proc
+if _tproc is not None:
+    _trunning = _tproc.poll() is None
+    if _trunning:
+        _iters = st.session_state.train_iterations
+        _ta, _tb = st.columns([5, 1])
+        _ta.info(f"🔄 3DGS学習実行中　｜　詳細は「🗂️ バッチキュー」ページで確認できます")
+        if _tb.button("⏹ 中断", key="train_stop"):
+            try: os.kill(_tproc.pid, signal.SIGTERM)
+            except Exception: pass
+            st.session_state.train_proc = None
             st.session_state.pop("active_task", None)
-            if st.button("← 設定画面に戻る"):
-                st.session_state.train_proc = None
-                st.rerun()
-
-    # 学習中は自動リフレッシュ
-    if running:
+            import sys as _s3; _s3.path.insert(0, "/workspace")
+            from queue_helper import clear_active_task_file as _clf; _clf()
+            st.rerun()
         time.sleep(3)
         st.rerun()
-
-    st.stop()
-
+    elif _tproc.returncode == 0:
+        st.success("✅ 学習完了！「🖼️ 結果確認」ページで結果を確認できます。")
+        st.session_state.pop("active_task", None)
+        if st.button("✕ クリア", key="train_clear"):
+            st.session_state.train_proc = None
+            st.rerun()
+    else:
+        st.error(f"❌ エラーで終了しました（終了コード: {_tproc.returncode}）")
+        st.session_state.pop("active_task", None)
+        if st.button("✕ クリア", key="train_clear_err"):
+            st.session_state.train_proc = None
+            st.rerun()
 
 # ════════════════════════════════════════════════════════════════════════════
-#  設定ビュー（学習前）
+#  設定ビュー（常に表示）
 # ════════════════════════════════════════════════════════════════════════════
 st.title("🧠 3DGS 学習実行")
 st.caption("3D Gaussian Splatting の学習を実行します（gaussian-splatting/train.py 使用）")
@@ -346,6 +281,8 @@ if st.button("▶ 学習を開始", type="primary",
             "start_time": time.time(),
             "iterations": iterations,
         }
+        from queue_helper import save_active_task_file as _satf
+        _satf(st.session_state.active_task)
 
         st.rerun()
 

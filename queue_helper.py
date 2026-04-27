@@ -52,6 +52,28 @@ def pending_size() -> int:
     return sum(1 for j in load_queue() if j["status"] == "pending")
 
 
+ACTIVE_TASK_FILE = "/workspace/tmp/active_task.json"
+
+def save_active_task_file(task: dict):
+    Path(ACTIVE_TASK_FILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(ACTIVE_TASK_FILE).write_text(
+        json.dumps(task, ensure_ascii=False), encoding="utf-8"
+    )
+
+def load_active_task_file() -> dict:
+    try:
+        p = Path(ACTIVE_TASK_FILE)
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        return {}
+
+def clear_active_task_file():
+    try:
+        Path(ACTIVE_TASK_FILE).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def next_exp_name(scene_name: str, base_dir: str = "/workspace/experiments") -> str:
     """
     YYYYMMDD_<scene>_01 形式で次に使える実験名を返す。

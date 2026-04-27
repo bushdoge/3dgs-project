@@ -17,6 +17,7 @@ sys.path.insert(0, "/workspace")
 from queue_helper import (
     QUEUE_FILE, JOB_ICONS,
     load_queue, save_queue, pending_size,
+    load_active_task_file, clear_active_task_file,
 )
 
 BATCH_STATE_FILE = "/workspace/tmp/batch_state.json"
@@ -321,7 +322,105 @@ if st.session_state.bq_active:
 
 st.divider()
 
-# ── 実行中ステータス ──────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+#  モニタリングセクション（パイプライン・単品・バッチ の実行状況を一括表示）
+# ════════════════════════════════════════════════════════════════════════════
+
+def _is_pid_alive_local(pid) -> bool:
+    if not pid: return False
+    try:
+        p = Path(f"/proc/{pid}/status")
+        if not p.exists(): return False
+        for line in p.read_text().splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line
+        return False
+    except Exception:
+        return False
+
+def _log_tail(log_path, n=12):
+    try:
+        p = Path(log_path)
+        if not p.exists(): return ""
+        lines = [l for l in p.read_text(errors="replace").replace("\r","\n").splitlines() if l.strip()]
+        return "\n".join(lines[-n:])
+    except Exception:
+        return ""
+
+# ── 1. パイプライン状態（pipeline_state.json） ───────────────────────────────
+try:
+    from pipeline_widget import _load_state as _pl_load, _parse_progress, _parse_colmap_substeps, _render_substep_bars
+    _pl = _pl_load()
+    _pl_active = _pl.get("active") and _pl.get("step") not in ("done","failed","setup",None)
+except Exception:
+    _pl = {}; _pl_active = False
+
+# ── 2. 単品ジョブ状態（active_task.json） ────────────────────────────────────
+_at = load_active_task_file()
+_at_active = bool(_at) and _is_pid_alive_local(_at.get("pid"))
+if _at and not _at_active:
+    clear_active_task_file(); _at = {}
+
+# ── 3. バッチジョブ状態 ──────────────────────────────────────────────────────
+_bq_active = st.session_state.bq_active
+
+_any_running = _pl_active or _at_active or _bq_active
+
+if _any_running:
+    st.subheader("🔄 実行中")
+
+    # パイプライン
+    if _pl_active:
+        _step = _pl.get("step","")
+        _step_ja = {"extracting":"フレーム抽出","colmap":"COLMAP/HLoc","training":"3DGS学習"}.get(_step,_step)
+        _scene   = Path(_pl.get("experiment_dir","")).name
+        _elapsed = time.time() - _pl.get("start_time", time.time())
+        with st.expander(f"🚀 パイプライン　{_scene}　— {_step_ja}　（{_elapsed/60:.1f}分経過）", expanded=True):
+            _exp_dir = _pl.get("experiment_dir","")
+            _step_logs = {
+                "extracting": str(Path(_exp_dir)/"extract_log.txt"),
+                "colmap":     str(Path(_exp_dir)/"colmap_log.txt"),
+                "training":   str(Path(_exp_dir)/"output"/"train_log.txt"),
+            }
+            _pl_s = {**_pl, "log_path": _step_logs.get(_step, _pl.get("log_path","")), "step": _step}
+            try:
+                if _step == "colmap":
+                    _subs = _parse_colmap_substeps(_pl_s)
+                    if _subs: _render_substep_bars(_subs)
+                else:
+                    _pct, _lbl = _parse_progress(_pl_s)
+                    if _pct is not None: st.progress(_pct, text=_lbl)
+            except Exception:
+                pass
+            _tl = _log_tail(_pl_s["log_path"])
+            if _tl: st.code(_tl, language=None)
+
+    # 単品ジョブ
+    if _at_active:
+        _at_label   = _at.get("label", "単品ジョブ")
+        _at_scene   = _at.get("scene","")
+        _at_elapsed = time.time() - _at.get("start_time", time.time())
+        _at_icon    = JOB_ICONS.get(_at.get("step",""), "▪")
+        with st.expander(f"{_at_icon} {_at_label}　{_at_scene}　（{_at_elapsed/60:.1f}分経過）", expanded=True):
+            try:
+                _at_state = {**_at}
+                if _at.get("step") == "colmap":
+                    _subs = _parse_colmap_substeps(_at_state)
+                    if _subs: _render_substep_bars(_subs)
+                else:
+                    _pct, _lbl = _parse_progress(_at_state)
+                    if _pct is not None: st.progress(_pct, text=_lbl)
+            except Exception:
+                pass
+            _tl = _log_tail(_at.get("log_path",""))
+            if _tl: st.code(_tl, language=None)
+
+    time.sleep(3)
+    st.rerun()
+
+st.divider()
+
+# ── 実行中ステータス（バッチキュー） ─────────────────────────────────────────
 if st.session_state.bq_active:
     job     = _current_job()
     step_ja = {

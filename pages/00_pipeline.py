@@ -371,133 +371,58 @@ for col, step, label in zip(col_steps, steps, step_labels):
 st.divider()
 
 # ════════════════════════════════════════════════════════════════════════════
-#  実行中・完了ビュー
+#  実行ステータスバナー（設定フォームより上に常時表示）
 # ════════════════════════════════════════════════════════════════════════════
 if st.session_state.get("_pipeline_restored"):
-    st.info("🔄 Streamlit 再起動前のパイプライン実行状態を復元しました。そのまま監視を継続します。")
+    st.info("🔄 Streamlit 再起動前のパイプライン実行状態を復元しました。")
     del st.session_state["_pipeline_restored"]
 
 if pl["active"]:
     advance_pipeline()
-
     current_step = pl["step"]
 
     if current_step == "done":
-        st.success("🎉 パイプラインが完了しました！")
         exp_dir = pl["experiment_dir"]
-        st.info(f"実験フォルダ: `{exp_dir}`\n\n「🖼️ 結果確認」ページで結果を確認してください。")
-
         elapsed = time.time() - pl["start_time"]
-        st.metric("総実行時間", f"{elapsed/60:.1f} 分")
-
-        if st.button("🔄 新しいパイプラインを開始"):
+        st.success(
+            f"🎉 パイプライン完了！　実験: `{Path(exp_dir).name}`　"
+            f"総時間: {elapsed/60:.1f} 分　→「🖼️ 結果確認」で確認できます"
+        )
+        if st.button("✕ クリア", key="pl_clear_done"):
             clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
-        st.stop()
 
     elif current_step == "failed":
         st.error(f"❌ {pl['error_msg']}")
-        if pl["log_path"]:
-            with st.expander("ログを確認"):
-                st.text(get_log_tail(pl["log_path"], 50))
-        if st.button("🔄 リセットして最初から"):
+        if st.button("✕ リセット", key="pl_clear_failed"):
             clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
-        st.stop()
 
     else:
-        step_name_ja = {"extracting": "フレーム抽出", "colmap": "COLMAP", "training": "3DGS学習"}.get(current_step, current_step)
-        st.info(f"**{step_name_ja}** を実行中...")
-
-        # ── 全ステップ進捗バー ──────────────────────────────────────────────
-        try:
-            from pipeline_widget import (
-                _parse_colmap_substeps, _render_substep_bars, _parse_progress,
-            )
-            _exp_dir = pl.get("experiment_dir", "")
-            _step_logs = {
-                "extracting": str(Path(_exp_dir) / "extract_log.txt"),
-                "colmap":     str(Path(_exp_dir) / "colmap_log.txt"),
-                "training":   str(Path(_exp_dir) / "output" / "train_log.txt"),
-            }
-            _STEP_LABELS = {
-                "extracting": "① フレーム抽出",
-                "colmap":     "② COLMAP / HLoc",
-                "training":   "③ 3DGS 学習",
-            }
-            _COLOR = {"done": "#00cc66", "running": "#00aaff",
-                      "error": "#ff4444", "waiting": "#334455"}
-            _ICON  = {"done": "✅", "running": "🔄",
-                      "error": "❌", "waiting": "⏳"}
-
-            for _sk in ("extracting", "colmap", "training"):
-                _st = pl["step_status"].get(_sk, "waiting")
-                if current_step == _sk and _st != "done":
-                    _st = "running"
-                _c   = _COLOR.get(_st, "#334455")
-                _ico = _ICON.get(_st, "⏳")
-                st.markdown(
-                    f'<span style="color:{_c};font-size:0.82rem;font-weight:bold;">'
-                    f'{_ico} {_STEP_LABELS[_sk]}</span>',
-                    unsafe_allow_html=True,
-                )
-                if _st == "waiting":
-                    st.progress(0.0)
-                    continue
-                if _st == "done":
-                    st.progress(1.0)
-                    continue
-                # running: ログから進捗を取得
-                _pl_s = {**pl, "log_path": _step_logs[_sk], "step": _sk}
-                if _sk == "colmap":
-                    _subs = _parse_colmap_substeps(_pl_s)
-                    if _subs:
-                        _render_substep_bars(_subs)
-                    else:
-                        st.caption("ログを解析中...")
-                else:
-                    _pct, _lbl = _parse_progress(_pl_s)
-                    if _pct is not None:
-                        st.caption(_lbl)
-                        st.progress(_pct)
-                    else:
-                        st.caption("進捗を取得中...")
-        except Exception:
-            st.caption("進捗を取得中...")
-
-        # ログ表示
-        if pl["log_path"]:
-            log_tail = get_log_tail(pl["log_path"], 15)
-            st.text_area("最新ログ", log_tail, height=390, label_visibility="visible")
-
-        # 中断ボタン
-        if st.button("⏹ パイプラインを中断"):
+        step_ja = {"extracting": "フレーム抽出", "colmap": "COLMAP", "training": "3DGS学習"}.get(current_step, current_step)
+        scene   = Path(pl.get("experiment_dir", "")).name
+        elapsed = time.time() - pl.get("start_time", time.time())
+        ba, bb  = st.columns([5, 1])
+        ba.info(f"🔄 **{step_ja}** 実行中　｜　{scene}　｜　{elapsed/60:.1f} 分経過　→ 詳細は「🗂️ バッチキュー」ページ")
+        if bb.button("⏹ 中断", key="pl_stop"):
             proc = pl["proc"]
             pid  = pl.get("pid")
-            kill_pid = None
-            if proc and proc.poll() is None:
-                kill_pid = proc.pid
-            elif pid:
-                kill_pid = pid
+            kill_pid = proc.pid if (proc and proc.poll() is None) else pid
             if kill_pid:
-                try:
-                    os.kill(kill_pid, signal.SIGTERM)
-                except Exception:
-                    pass
+                try: os.kill(kill_pid, signal.SIGTERM)
+                except Exception: pass
             clear_pipeline_state()
             st.session_state.pipeline = DEFAULT_PIPELINE.copy()
             st.rerun()
-
         time.sleep(3)
         st.rerun()
 
-    st.stop()
-
+st.divider()
 
 # ════════════════════════════════════════════════════════════════════════════
-#  設定ビュー（パイプライン開始前）
+#  設定ビュー（常に表示）
 # ════════════════════════════════════════════════════════════════════════════
 st.subheader("🎬 入力動画の選択")
 

@@ -34,80 +34,33 @@ def _colmap_running():
     return p is not None and p.poll() is None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  実行中 / 完了ビュー
-# ════════════════════════════════════════════════════════════════════════════
-if _colmap_running() or (
-    st.session_state.colmap_proc is not None
-    and st.session_state.colmap_proc.poll() is not None
-):
-    proc    = st.session_state.colmap_proc
-    running = proc.poll() is None
-
-    st.title("📷 姿勢推定（COLMAP / HLoc）")
-    if running:
-        st.markdown('<span style="color:#00cc66">● 実行中</span>', unsafe_allow_html=True)
-    elif proc.returncode == 0:
-        st.success("✅ 姿勢推定完了！")
-    else:
-        st.error(f"❌ エラーで終了しました（終了コード: {proc.returncode}）")
-
-    log_path = Path(st.session_state.colmap_log_path or "")
-    log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
-
-    # サブステップ進捗（pipeline_widgetを再利用）
-    try:
-        from pipeline_widget import _parse_colmap_substeps, _render_substep_bars, _parse_progress
-        _state = {
-            "step":      "colmap",
-            "log_path":  str(log_path),
-            "use_hloc":  st.session_state.colmap_use_hloc,
-        }
-        substeps = _parse_colmap_substeps(_state)
-        if substeps:
-            _render_substep_bars(substeps)
-        else:
-            pct, label = _parse_progress(_state)
-            if pct is not None:
-                st.progress(pct, text=label)
-            else:
-                st.caption("ログを解析中...")
-    except Exception:
-        pass
-
-    with st.expander("📋 ログ（末尾）", expanded=False):
-        lines = [l for l in log_text.replace("\r", "\n").split("\n") if l.strip()]
-        st.code("\n".join(lines[-30:]) or "（まだログがありません）", language=None)
-
-    st.divider()
-    c1, _ = st.columns([1, 5])
-    with c1:
-        if running:
-            if st.button("⏹ 中断", type="secondary"):
-                try:
-                    os.kill(proc.pid, signal.SIGTERM)
-                except Exception:
-                    pass
-                st.session_state.colmap_proc = None
-                st.session_state.pop("active_task", None)
-                st.rerun()
-        else:
-            if st.button("← 設定に戻る"):
-                st.session_state.colmap_proc = None
-                st.session_state.pop("active_task", None)
-                st.rerun()
-
-    if running:
+# ── 実行ステータスバナー ───────────────────────────────────────────────────────
+_cproc = st.session_state.colmap_proc
+if _cproc is not None:
+    _crunning = _cproc.poll() is None
+    if _crunning:
+        _ca, _cb = st.columns([5, 1])
+        _ca.info("🔄 姿勢推定実行中　｜　詳細は「🗂️ バッチキュー」ページで確認できます")
+        if _cb.button("⏹ 中断", key="colmap_stop"):
+            try: os.kill(_cproc.pid, signal.SIGTERM)
+            except Exception: pass
+            st.session_state.colmap_proc = None
+            st.session_state.pop("active_task", None)
+            import sys as _s2; _s2.path.insert(0, "/workspace")
+            from queue_helper import clear_active_task_file as _clf; _clf()
+            st.rerun()
         time.sleep(3)
         st.rerun()
-
-    try:
-        from pipeline_widget import render_sticky_footer
-        render_sticky_footer()
-    except Exception:
-        pass
-    st.stop()
-
+    elif _cproc.returncode == 0:
+        st.success("✅ 姿勢推定完了！次は「🧠 3DGS学習」ページへ。")
+        if st.button("✕ クリア", key="colmap_clear"):
+            st.session_state.colmap_proc = None
+            st.rerun()
+    else:
+        st.error(f"❌ エラーで終了しました（終了コード: {_cproc.returncode}）")
+        if st.button("✕ クリア", key="colmap_clear_err"):
+            st.session_state.colmap_proc = None
+            st.rerun()
 
 st.title("📷 姿勢推定（COLMAP / HLoc）")
 st.caption("フレーム画像からカメラ姿勢を推定します（Structure from Motion）")
@@ -356,6 +309,8 @@ if st.button(btn_label, type="primary", disabled=not source_path):
             "start_time": time.time(),
             "use_hloc":   use_hloc,
         }
+        from queue_helper import save_active_task_file as _satf
+        _satf(st.session_state.active_task)
         st.rerun()
 
 # ── キューに追加 ──────────────────────────────────────────────────────────────
