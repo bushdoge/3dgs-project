@@ -312,19 +312,88 @@ def _stop_batch():
     save_queue(st.session_state.bq_queue)
     _clear_batch_state()
 
-# ─── UI ──────────────────────────────────────────────────────────────────────
-st.title("🗂️ バッチキュー")
-st.caption("各ページから追加されたジョブを順番に自動実行します")
+# ─── コマンドライン生成 ───────────────────────────────────────────────────────
 
-# 実行中なら進行チェック
-if st.session_state.bq_active:
-    _advance()
+def _job_cmdline(job: dict) -> str:
+    """ジョブ設定からコマンドライン文字列を生成する"""
+    jtype = job.get("type", "pipeline")
+    cfg   = job.get("config", {})
+    exp   = job.get("exp_dir", "?")
+    parts = []
 
-st.divider()
+    if jtype in ("pipeline", "extract"):
+        if cfg.get("is_360"):
+            angles = " ".join(f"{y},{p}" for y, p in cfg.get("angles", []))
+            lines = [
+                "python3 /workspace/scripts/convert_360.py",
+                f"  --input {cfg.get('video_path','')}",
+                f"  --output {exp}/input",
+                f"  --fps {cfg.get('fps',1.0)}",
+                f"  --fov {cfg.get('fov',90)} --width {cfg.get('out_w',1024)} --height {cfg.get('out_h',1024)}",
+                f"  --angles {angles}",
+            ]
+        else:
+            lines = [
+                "python3 /workspace/scripts/extract_frames.py",
+                f"  --input {cfg.get('video_path','')}",
+                f"  --output {exp}/input",
+                f"  --fps {cfg.get('fps',2.0)}",
+            ]
+        parts.append("# フレーム抽出\n" + " \\\n".join(lines))
 
-# ════════════════════════════════════════════════════════════════════════════
-#  モニタリングセクション（パイプライン・単品・バッチ の実行状況を一括表示）
-# ════════════════════════════════════════════════════════════════════════════
+    if jtype in ("pipeline", "colmap"):
+        if cfg.get("use_hloc"):
+            lines = [
+                "python3 /workspace/scripts/run_hloc.py",
+                f"  --source_path {exp}",
+                f"  --feature_type {cfg.get('feature_type','superpoint_aachen')}",
+                f"  --matcher_type {cfg.get('matcher_type','superpoint+lightglue')}",
+                f"  --pair_method {cfg.get('pair_method','exhaustive')}",
+            ]
+            if cfg.get("pair_method") == "retrieval":
+                lines += [
+                    f"  --retrieval_model {cfg.get('retrieval_model','netvlad')}",
+                    f"  --num_matched {cfg.get('num_matched',20)}",
+                ]
+        else:
+            lines = [
+                "python3 /workspace/scripts/run_colmap.py",
+                f"  --source_path {exp}",
+                f"  --camera_model {cfg.get('camera_model','OPENCV')}",
+            ]
+        parts.append("# 姿勢推定\n" + " \\\n".join(lines))
+
+    if jtype in ("pipeline", "train"):
+        mp = cfg.get("model_path", f"{exp}/output")
+        save_it = " ".join(str(i) for i in cfg.get("save_iterations", [7000, 30000]))
+        test_it = " ".join(str(i) for i in cfg.get("test_iterations", [1000, 7000, 30000]))
+        lines = [
+            "python3 /workspace/scripts/run_train.py",
+            f"  --source {exp}",
+            f"  --model_path {mp}",
+            f"  --iterations {cfg.get('iterations',30000)}",
+            f"  --save_iterations {save_it}",
+            f"  --test_iterations {test_it}",
+        ]
+        if cfg.get("eval"):       lines.append("  --eval")
+        if cfg.get("resolution"): lines.append(f"  --resolution {cfg['resolution']}")
+        parts.append("# 3DGS学習\n" + " \\\n".join(lines))
+
+    if jtype == "render":
+        mp = cfg.get("model_path", f"{exp}/output")
+        lines = [
+            "python3 /workspace/scripts/run_render.py",
+            f"  -m {mp}",
+            f"  -s {exp}",
+            f"  --iteration {cfg.get('iteration',-1)}",
+        ]
+        if cfg.get("skip_train"):       lines.append("  --skip_train")
+        if cfg.get("skip_test"):        lines.append("  --skip_test")
+        if cfg.get("white_background"): lines.append("  --white_background")
+        parts.append("# レンダリング\n" + " \\\n".join(lines))
+
+    return "\n\n".join(parts) if parts else "（コマンド生成不可）"
+
 
 def _is_pid_alive_local(pid) -> bool:
     if not pid: return False
@@ -338,197 +407,202 @@ def _is_pid_alive_local(pid) -> bool:
     except Exception:
         return False
 
-def _log_tail(log_path, n=12):
+def _log_tail(log_path, n=15):
     try:
-        p = Path(log_path)
+        p = Path(log_path or "")
         if not p.exists(): return ""
         lines = [l for l in p.read_text(errors="replace").replace("\r","\n").splitlines() if l.strip()]
         return "\n".join(lines[-n:])
     except Exception:
         return ""
 
-# ── 1. パイプライン状態（pipeline_state.json） ───────────────────────────────
-try:
-    from pipeline_widget import _load_state as _pl_load, _parse_progress, _parse_colmap_substeps, _render_substep_bars
-    _pl = _pl_load()
-    _pl_active = _pl.get("active") and _pl.get("step") not in ("done","failed","setup",None)
-except Exception:
-    _pl = {}; _pl_active = False
+# ─── UI ──────────────────────────────────────────────────────────────────────
+st.title("🗂️ バッチキュー")
+st.caption("各ページから追加されたジョブを順番に自動実行します")
 
-# ── 2. 単品ジョブ状態（active_task.json） ────────────────────────────────────
-_at = load_active_task_file()
-_at_active = bool(_at) and _is_pid_alive_local(_at.get("pid"))
-if _at and not _at_active:
-    clear_active_task_file(); _at = {}
-
-# ── 3. バッチジョブ状態 ──────────────────────────────────────────────────────
-_bq_active = st.session_state.bq_active
-
-_any_running = _pl_active or _at_active or _bq_active
-
-if _any_running:
-    st.subheader("🔄 実行中")
-
-    # パイプライン
-    if _pl_active:
-        _step = _pl.get("step","")
-        _step_ja = {"extracting":"フレーム抽出","colmap":"COLMAP/HLoc","training":"3DGS学習"}.get(_step,_step)
-        _scene   = Path(_pl.get("experiment_dir","")).name
-        _elapsed = time.time() - _pl.get("start_time", time.time())
-        with st.expander(f"🚀 パイプライン　{_scene}　— {_step_ja}　（{_elapsed/60:.1f}分経過）", expanded=True):
-            _exp_dir = _pl.get("experiment_dir","")
-            _step_logs = {
-                "extracting": str(Path(_exp_dir)/"extract_log.txt"),
-                "colmap":     str(Path(_exp_dir)/"colmap_log.txt"),
-                "training":   str(Path(_exp_dir)/"output"/"train_log.txt"),
-            }
-            _pl_s = {**_pl, "log_path": _step_logs.get(_step, _pl.get("log_path","")), "step": _step}
-            try:
-                if _step == "colmap":
-                    _subs = _parse_colmap_substeps(_pl_s)
-                    if _subs: _render_substep_bars(_subs)
-                else:
-                    _pct, _lbl = _parse_progress(_pl_s)
-                    if _pct is not None: st.progress(_pct, text=_lbl)
-            except Exception:
-                pass
-            _tl = _log_tail(_pl_s["log_path"])
-            if _tl: st.code(_tl, language=None)
-
-    # 単品ジョブ
-    if _at_active:
-        _at_label   = _at.get("label", "単品ジョブ")
-        _at_scene   = _at.get("scene","")
-        _at_elapsed = time.time() - _at.get("start_time", time.time())
-        _at_icon    = JOB_ICONS.get(_at.get("step",""), "▪")
-        with st.expander(f"{_at_icon} {_at_label}　{_at_scene}　（{_at_elapsed/60:.1f}分経過）", expanded=True):
-            try:
-                _at_state = {**_at}
-                if _at.get("step") == "colmap":
-                    _subs = _parse_colmap_substeps(_at_state)
-                    if _subs: _render_substep_bars(_subs)
-                else:
-                    _pct, _lbl = _parse_progress(_at_state)
-                    if _pct is not None: st.progress(_pct, text=_lbl)
-            except Exception:
-                pass
-            _tl = _log_tail(_at.get("log_path",""))
-            if _tl: st.code(_tl, language=None)
-
-    time.sleep(3)
-    st.rerun()
-
-st.divider()
-
-# ── 実行中ステータス（バッチキュー） ─────────────────────────────────────────
+# 実行中なら進行チェック
 if st.session_state.bq_active:
-    job     = _current_job()
-    step_ja = {
-        "extracting": "フレーム抽出", "colmap": "COLMAP/HLoc",
-        "training": "3DGS学習", "train": "3DGS学習",
-        "render": "レンダリング", "extract": "フレーム抽出",
-    }.get(st.session_state.bq_step, st.session_state.bq_step)
+    _advance()
 
-    done_n  = sum(1 for j in st.session_state.bq_queue if j["status"] == "done")
-    total_n = len(st.session_state.bq_queue)
-
-    st.markdown(
-        f'<span style="color:#00cc66;font-weight:bold;">● 実行中</span>'
-        f'　{done_n}/{total_n} 完了'
-        f'　<b>{job["exp_name"] if job else "—"}</b>　{step_ja}',
-        unsafe_allow_html=True,
-    )
-    st.progress(done_n / max(total_n, 1))
-
-    log = st.session_state.bq_log
-    if log and Path(log).exists():
-        lines = [l for l in Path(log).read_text(errors="replace")
-                 .replace("\r", "\n").splitlines() if l.strip()]
-        with st.expander("📋 実行中ログ", expanded=True):
-            st.code("\n".join(lines[-12:]) or "（待機中）", language=None)
-
-    if st.button("⏹ バッチを中断", type="secondary"):
-        _stop_batch()
-        st.rerun()
-
-    time.sleep(3)
-    st.rerun()
-    st.stop()
-
-# ── キュー一覧 ────────────────────────────────────────────────────────────────
-st.subheader("📋 キュー")
+# pipeline_widget からプログレス解析関数を取得
+try:
+    from pipeline_widget import _parse_progress, _parse_colmap_substeps, _render_substep_bars
+    _has_widget = True
+except Exception:
+    _has_widget = False
 
 queue   = st.session_state.bq_queue
+running = [j for j in queue if j["status"] == "running"]
 pending = [j for j in queue if j["status"] == "pending"]
 done_f  = [j for j in queue if j["status"] in ("done", "failed")]
 
+STEP_JA = {
+    "extracting": "フレーム抽出", "extract": "フレーム抽出",
+    "colmap": "COLMAP/HLoc", "training": "3DGS学習",
+    "train": "3DGS学習", "render": "レンダリング",
+}
 STATUS_ICON = {"pending": "⏳", "running": "🔄", "done": "✅", "failed": "❌"}
 
-if not queue:
-    st.info("キューは空です。各ページの「📋 キューに追加」ボタンから追加してください。")
-else:
-    # pending ジョブ（順番入れ替え可）
-    if pending:
-        st.caption(f"実行待ち: {len(pending)} 件")
-        for i, job in enumerate(pending):
-            icon  = JOB_ICONS.get(job.get("type", "pipeline"), "▪")
-            c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
-            c1.markdown(f"{icon} **{job['exp_name']}**　`{job.get('label','')}`")
-            # ↑ 上へ
-            if c2.button("↑", key=f"up_{job['id']}",
-                         disabled=(i == 0), use_container_width=True):
-                idx = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
-                prev_idx = next(k for k in range(idx-1, -1, -1)
-                                if queue[k]["status"] == "pending")
-                queue[idx], queue[prev_idx] = queue[prev_idx], queue[idx]
-                save_queue(queue)
-                st.rerun()
-            # ↓ 下へ
-            if c3.button("↓", key=f"dn_{job['id']}",
-                         disabled=(i == len(pending)-1), use_container_width=True):
-                idx = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
-                next_idx = next(k for k in range(idx+1, len(queue))
-                                if queue[k]["status"] == "pending")
-                queue[idx], queue[next_idx] = queue[next_idx], queue[idx]
-                save_queue(queue)
-                st.rerun()
-            # 削除
-            if c4.button("✕", key=f"del_{job['id']}", use_container_width=True):
-                st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
-                save_queue(st.session_state.bq_queue)
-                st.rerun()
+# ════════════════════════════════════════════════════════════════════════════
+#  1. 実行中ジョブ（バッチ）
+# ════════════════════════════════════════════════════════════════════════════
+if st.session_state.bq_active:
+    job     = _current_job()
+    step    = st.session_state.bq_step
+    step_ja = STEP_JA.get(step, step)
+    elapsed = time.time() - (job.get("start_time") if job and job.get("start_time") else time.time())
+    scene   = job["exp_name"] if job else "—"
+    jtype   = job.get("type", "pipeline") if job else "pipeline"
+    icon    = JOB_ICONS.get(jtype, "▪")
 
-    # 完了・失敗ジョブ
-    if done_f:
-        with st.expander(f"完了・失敗 ({len(done_f)} 件)", expanded=False):
-            for job in done_f:
-                icon = STATUS_ICON.get(job["status"], "▪")
-                type_icon = JOB_ICONS.get(job.get("type", "pipeline"), "▪")
-                dc1, dc2 = st.columns([5, 1])
-                dc1.caption(f"{icon} {type_icon} {job['exp_name']}　({job['status']})")
-                if dc2.button("🗑", key=f"rm_{job['id']}", use_container_width=True):
-                    st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
-                    save_queue(st.session_state.bq_queue)
-                    st.rerun()
+    # ヘッダー
+    ha, hb = st.columns([5, 1])
+    ha.markdown(
+        f'<span style="color:#00cc66;font-weight:bold;">● 実行中</span>'
+        f'　{icon} **{scene}**　— {step_ja}',
+        unsafe_allow_html=True,
+    )
+    if hb.button("⏹ 中断", key="bq_stop", type="secondary"):
+        _stop_batch()
+        st.rerun()
+
+    # プログレスバー
+    log_path = st.session_state.bq_log or ""
+    if _has_widget and log_path:
+        _state = {"step": step, "log_path": log_path,
+                  "use_hloc": job.get("config", {}).get("use_hloc", False) if job else False,
+                  "iterations": job.get("config", {}).get("iterations", 30000) if job else 30000}
+        try:
+            if step == "colmap":
+                _subs = _parse_colmap_substeps(_state)
+                if _subs: _render_substep_bars(_subs)
+            else:
+                _pct, _lbl = _parse_progress(_state)
+                if _pct is not None: st.progress(_pct, text=_lbl)
+        except Exception:
+            pass
+
+    # ログ
+    _tl = _log_tail(log_path)
+    if _tl:
+        st.code(_tl, language=None)
+    else:
+        st.caption("ログ待機中...")
 
     st.divider()
-    bc1, bc2 = st.columns(2)
-    with bc1:
-        if pending and st.button(
-            f"▶ バッチ実行開始（{len(pending)} 件）",
-            type="primary", use_container_width=True,
-        ):
+    time.sleep(3)
+    st.rerun()
+
+# ════════════════════════════════════════════════════════════════════════════
+#  2. パイプライン・単品ジョブ（他ページから起動されたもの）
+# ════════════════════════════════════════════════════════════════════════════
+if not st.session_state.bq_active:
+    _at = load_active_task_file()
+    _at_alive = bool(_at) and _is_pid_alive_local(_at.get("pid"))
+    if _at and not _at_alive:
+        clear_active_task_file(); _at = {}
+
+    try:
+        from pipeline_widget import _load_state as _pll
+        _pl = _pll()
+        _pl_alive = _pl.get("active") and _pl.get("step") not in ("done","failed","setup",None)
+    except Exception:
+        _pl = {}; _pl_alive = False
+
+    if _pl_alive or _at_alive:
+        with st.expander("🔄 他ページの実行中ジョブ", expanded=True):
+            if _pl_alive:
+                _step = _pl.get("step","")
+                _scene = Path(_pl.get("experiment_dir","")).name
+                st.caption(f"🚀 Pipeline Runner — {_scene} — {STEP_JA.get(_step,_step)}")
+                _exp = _pl.get("experiment_dir","")
+                _lp = {"extracting": f"{_exp}/extract_log.txt",
+                       "colmap": f"{_exp}/colmap_log.txt",
+                       "training": f"{_exp}/output/train_log.txt"}.get(_step, _pl.get("log_path",""))
+                if _has_widget:
+                    try:
+                        _s = {**_pl, "log_path": _lp, "step": _step}
+                        if _step == "colmap":
+                            _subs = _parse_colmap_substeps(_s)
+                            if _subs: _render_substep_bars(_subs)
+                        else:
+                            _p, _l = _parse_progress(_s)
+                            if _p is not None: st.progress(_p, text=_l)
+                    except Exception: pass
+                _tl = _log_tail(_lp)
+                if _tl: st.code(_tl, language=None)
+            if _at_alive:
+                _icon = JOB_ICONS.get(_at.get("step",""), "▪")
+                st.caption(f"{_icon} {_at.get('label','')} — {_at.get('scene','')}")
+                if _has_widget:
+                    try:
+                        _p, _l = _parse_progress(_at)
+                        if _p is not None: st.progress(_p, text=_l)
+                    except Exception: pass
+                _tl = _log_tail(_at.get("log_path",""))
+                if _tl: st.code(_tl, language=None)
+        st.divider()
+
+# ════════════════════════════════════════════════════════════════════════════
+#  3. 待機中キュー
+# ════════════════════════════════════════════════════════════════════════════
+st.subheader("📋 待機中")
+
+if not pending and not st.session_state.bq_active:
+    st.info("キューは空です。各ページの「📋 キューに追加」ボタンから追加してください。")
+else:
+    # バッチ実行開始ボタン
+    if not st.session_state.bq_active and pending:
+        if st.button(f"▶ バッチ実行開始（{len(pending)} 件）",
+                     type="primary", use_container_width=True):
             st.session_state.bq_active = True
             _run_next()
             st.rerun()
-    with bc2:
-        if done_f and st.button("🗑 完了・失敗を削除", use_container_width=True):
-            st.session_state.bq_queue = [j for j in queue if j["status"] == "pending"]
-            save_queue(st.session_state.bq_queue)
-            st.rerun()
 
-st.divider()
-st.info("➕ 各ページの「📋 キューに追加」ボタンから追加できます。実行中でも追加可能です。")
+    # 待機中ジョブ一覧
+    for i, job in enumerate(pending):
+        icon  = JOB_ICONS.get(job.get("type", "pipeline"), "▪")
+        label = job.get("label", "")
+        c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+        c1.markdown(f"{icon} **{job['exp_name']}**　<small style='color:#4a90b8'>{label}</small>",
+                    unsafe_allow_html=True)
+        if c2.button("↑", key=f"up_{job['id']}", disabled=(i == 0), use_container_width=True):
+            idx      = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
+            prev_idx = next(k for k in range(idx-1, -1, -1) if queue[k]["status"] == "pending")
+            queue[idx], queue[prev_idx] = queue[prev_idx], queue[idx]
+            save_queue(queue); st.rerun()
+        if c3.button("↓", key=f"dn_{job['id']}", disabled=(i == len(pending)-1), use_container_width=True):
+            idx      = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
+            next_idx = next(k for k in range(idx+1, len(queue)) if queue[k]["status"] == "pending")
+            queue[idx], queue[next_idx] = queue[next_idx], queue[idx]
+            save_queue(queue); st.rerun()
+        if c4.button("✕", key=f"del_{job['id']}", use_container_width=True):
+            st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
+            save_queue(st.session_state.bq_queue); st.rerun()
+
+        # 設定コマンドライン（デフォルト非表示）
+        with st.expander("設定を表示", expanded=False):
+            st.code(_job_cmdline(job), language="bash")
+
+# ════════════════════════════════════════════════════════════════════════════
+#  4. 完了・失敗一覧
+# ════════════════════════════════════════════════════════════════════════════
+if done_f:
+    st.divider()
+    st.subheader("📁 完了・失敗")
+    for job in done_f:
+        s_icon  = STATUS_ICON.get(job["status"], "▪")
+        j_icon  = JOB_ICONS.get(job.get("type","pipeline"), "▪")
+        dc1, dc2 = st.columns([5, 1])
+        dc1.markdown(f"{s_icon} {j_icon} **{job['exp_name']}**　<small style='color:#4a90b8'>{job['status']}</small>",
+                     unsafe_allow_html=True)
+        if dc2.button("🗑", key=f"rm_{job['id']}", use_container_width=True):
+            st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
+            save_queue(st.session_state.bq_queue); st.rerun()
+
+    if st.button("🗑 完了・失敗をまとめて削除", use_container_width=False):
+        st.session_state.bq_queue = [j for j in queue if j["status"] == "pending"]
+        save_queue(st.session_state.bq_queue); st.rerun()
 
 # ─── 固定フッター ─────────────────────────────────────────────────────────────
 try:
