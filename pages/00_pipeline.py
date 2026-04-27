@@ -571,7 +571,9 @@ with col3:
     # 動画が変わったときだけデフォルト名を再生成（それ以外はユーザー編集を維持）
     if st.session_state.get("_exp_scene") != scene_name or "exp_name" not in st.session_state:
         st.session_state["_exp_scene"] = scene_name
-        st.session_state["exp_name"] = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{scene_name}"
+        import sys as _sys2; _sys2.path.insert(0, "/workspace")
+        from queue_helper import next_exp_name as _nxt
+        st.session_state["exp_name"] = _nxt(scene_name)
     exp_name = st.text_input("実験フォルダ名", key="exp_name")
     experiment_dir = f"/workspace/experiments/{exp_name}"
     st.caption(f"作成先: `{experiment_dir}`")

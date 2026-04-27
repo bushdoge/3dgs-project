@@ -50,3 +50,21 @@ def queue_size() -> int:
 
 def pending_size() -> int:
     return sum(1 for j in load_queue() if j["status"] == "pending")
+
+
+def next_exp_name(scene_name: str, base_dir: str = "/workspace/experiments") -> str:
+    """
+    YYYYMMDD_<scene>_01 形式で次に使える実験名を返す。
+    同じ日・シーン名の実験が存在する場合は _02, _03 ... と連番を増やす。
+    """
+    from datetime import datetime as _dt
+    date_prefix = _dt.now().strftime("%Y%m%d")
+    base        = f"{date_prefix}_{scene_name}"
+    existing    = {p.name for p in Path(base_dir).iterdir() if p.is_dir()} \
+                  if Path(base_dir).exists() else set()
+    n = 1
+    while True:
+        candidate = f"{base}_{n:02d}"
+        if candidate not in existing:
+            return candidate
+        n += 1

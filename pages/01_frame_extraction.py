@@ -248,8 +248,9 @@ st.subheader("出力設定")
 
 if input_path:
     scene_name = Path(input_path).stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    default_exp = f"/workspace/experiments/{timestamp}_{scene_name}"
+    import sys as _sys2; _sys2.path.insert(0, "/workspace")
+    from queue_helper import next_exp_name as _nxt
+    default_exp = f"/workspace/experiments/{_nxt(scene_name)}"
 else:
     default_exp = "/workspace/experiments/"
 
