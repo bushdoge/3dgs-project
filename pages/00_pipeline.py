@@ -140,24 +140,49 @@ def get_log_tail(log_path, n=30):
 #  ステップ進行ロジック
 # ════════════════════════════════════════════════════════════════════════════
 
+def _get_proc_starttime(pid) -> str | None:
+    """/proc/<pid>/stat の starttime フィールドを返す（PID再利用検出用）"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat.split()[21]  # 22番目フィールド（0-indexed: 21）
+    except Exception:
+        return None
+
+
 def _pid_returncode(pid) -> int | None:
     """PIDのみでプロセスの終了を確認する（Streamlit再起動後の復元用）。
     実行中: None、終了（成功）: 0、終了（エラー）: 1 を返す。"""
     if not pid:
         return None
-    # /proc/<pid>/status でゾンビ(Z)を検出する。
-    # os.kill(pid, 0) はゾンビに対しても成功してしまうため信頼できない。
+
     status_path = Path(f"/proc/{pid}/status")
     if status_path.exists():
         try:
-            for line in status_path.read_text().splitlines():
-                if line.startswith("State:"):
-                    if "Z" in line:
-                        break  # ゾンビ = 終了済み → ログ判定へ
-                    return None  # 生きているプロセス
+            # PID再利用チェック: 起動時刻が保存値と一致するか確認
+            saved_starttime = pl.get("proc_starttime")
+            if saved_starttime:
+                current_starttime = _get_proc_starttime(pid)
+                if current_starttime and current_starttime != str(saved_starttime):
+                    # 別プロセスがPIDを再利用している → 元のプロセスは終了済み
+                    pass  # ログ判定へ
+                else:
+                    # 同じプロセス or 時刻不明 → Stateで判断
+                    for line in status_path.read_text().splitlines():
+                        if line.startswith("State:"):
+                            if "Z" in line:
+                                break  # ゾンビ = 終了済み → ログ判定へ
+                            return None  # 生きているプロセス
+            else:
+                # 起動時刻未保存（旧形式の状態ファイル）→ 従来どおり
+                for line in status_path.read_text().splitlines():
+                    if line.startswith("State:"):
+                        if "Z" in line:
+                            break
+                        return None
         except OSError:
             pass
-    # プロセスが消えた or ゾンビ → ログ末尾でエラー判定
+
+    # プロセスが消えた or ゾンビ or PID再利用 → ログ末尾でエラー判定
     log_path = pl.get("log_path", "")
     if log_path and Path(log_path).exists():
         tail = Path(log_path).read_text(errors="replace").split("\n")[-15:]
@@ -292,6 +317,7 @@ def start_colmap():
     _write_settings_header(log_file, "カメラ推定")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
     pl["pid"]  = pl["proc"].pid
+    pl["proc_starttime"] = _get_proc_starttime(pl["pid"])
     save_pipeline_state(pl)
 
 
@@ -320,6 +346,7 @@ def start_training():
     _write_settings_header(log_file, "3DGS学習")
     pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
     pl["pid"]  = pl["proc"].pid
+    pl["proc_starttime"] = _get_proc_starttime(pl["pid"])
     save_pipeline_state(pl)
 
 
