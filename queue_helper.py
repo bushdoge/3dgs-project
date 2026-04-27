@@ -78,12 +78,20 @@ def next_exp_name(scene_name: str, base_dir: str = "/workspace/experiments") -> 
     """
     YYYYMMDD_<scene>_01 形式で次に使える実験名を返す。
     同じ日・シーン名の実験が存在する場合は _02, _03 ... と連番を増やす。
+    ディスク上のフォルダだけでなくキュー内の名前も重複チェックする。
     """
     from datetime import datetime as _dt
     date_prefix = _dt.now().strftime("%Y%m%d")
     base        = f"{date_prefix}_{scene_name}"
-    existing    = {p.name for p in Path(base_dir).iterdir() if p.is_dir()} \
-                  if Path(base_dir).exists() else set()
+
+    # ディスク上の既存フォルダ
+    existing = {p.name for p in Path(base_dir).iterdir() if p.is_dir()} \
+               if Path(base_dir).exists() else set()
+
+    # キュー内の名前も追加（まだ実行されていないものも含む）
+    for job in load_queue():
+        existing.add(job.get("exp_name", ""))
+
     n = 1
     while True:
         candidate = f"{base}_{n:02d}"
