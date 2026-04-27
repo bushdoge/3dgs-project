@@ -354,6 +354,23 @@ def _is_pid_alive(pid) -> bool:
         return False
 
 
+def _pipeline_proc_still_running(pl: dict) -> bool:
+    """パイプラインのサブプロセスが実際にまだ動いているか確認する"""
+    pid = pl.get("pid")
+    if not pid:
+        return False
+    try:
+        status = Path(f"/proc/{pid}/status")
+        if not status.exists():
+            return False
+        for line in status.read_text().splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line  # ゾンビ以外 = 生きている
+        return False
+    except Exception:
+        return False
+
+
 def render_sticky_footer():
     """
     ページ下部に固定表示するプログレスバー。
@@ -362,6 +379,26 @@ def render_sticky_footer():
     # ── パイプライン状態 ────────────────────────────────────────────
     pl = _load_state()
     pipeline_active = pl.get("active") and pl.get("step") not in ("done", "failed", "setup", None)
+
+    # プロセスが実際に終了しているのに状態ファイルが残っている場合はクリア
+    if pipeline_active and not _pipeline_proc_still_running(pl):
+        # ログ末尾を見てエラーか完了か判断
+        log_path = pl.get("log_path", "")
+        failed = False
+        if log_path and Path(log_path).exists():
+            tail = Path(log_path).read_text(errors="replace").split("\n")[-10:]
+            failed = any("ERROR:" in l or ("error" in l.lower() and "failed" in l.lower())
+                         for l in tail)
+        pl["active"] = False
+        pl["step"]   = "failed" if failed else "done"
+        pl["pid"]    = None
+        try:
+            import json as _j
+            Path(_STATE_FILE).write_text(_j.dumps({k: v for k, v in pl.items() if k != "proc"},
+                                                  ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        pipeline_active = False
 
     # ── 単品タスク状態 ──────────────────────────────────────────────
     task = st.session_state.get("active_task")
