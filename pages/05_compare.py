@@ -42,6 +42,31 @@ if not selected_names:
 
 selected_exps = [experiments_dir / name for name in selected_names]
 
+# ── カラーパレット割り当て ────────────────────────────────────────────────────
+PALETTE = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#636363", "#bcbd22", "#17becf",
+]
+MARKERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
+
+exp_colors  = {n: PALETTE[i % len(PALETTE)]  for i, n in enumerate(selected_names)}
+exp_markers = {n: MARKERS[i % len(MARKERS)]  for i, n in enumerate(selected_names)}
+
+# 色付き凡例をmultiselect直下に表示
+_legend_items = "".join(
+    f'<span style="display:inline-flex;align-items:center;gap:5px;'
+    f'margin:3px 16px 3px 0;white-space:nowrap;">'
+    f'<span style="background:{exp_colors[n]};color:#fff;font-size:0.72rem;'
+    f'font-weight:bold;padding:1px 6px;border-radius:3px;">{exp_markers[n]}</span>'
+    f'<span style="font-size:0.75rem;color:#b0c8e0;">'
+    f'{n if len(n)<=36 else n[:34]+"…"}</span></span>'
+    for n in selected_names
+)
+st.markdown(
+    f'<div style="display:flex;flex-wrap:wrap;padding:4px 0 8px;">{_legend_items}</div>',
+    unsafe_allow_html=True,
+)
+
 st.divider()
 
 
@@ -147,6 +172,7 @@ for exp in selected_exps:
         note_preview = lines[0][:40] if lines else ""
 
     rows.append({
+        " ":                  exp_markers[exp.name],  # カラーマーカー列
         "実験名":             exp.name,
         "フレーム数":         n_input,
         "COLMAP":             "✅" if has_colmap else "❌",
@@ -162,8 +188,27 @@ for exp in selected_exps:
         "メモ":               note_preview,
     })
 
-df_summary = pd.DataFrame(rows).set_index("実験名")
-st.dataframe(df_summary, use_container_width=True)
+df_summary = pd.DataFrame(rows)
+
+def _style_summary(df):
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    for idx, row in df.iterrows():
+        color = exp_colors.get(row["実験名"], "#888")
+        styles.loc[idx, " "] = (
+            f"background-color:{color};color:#fff;"
+            f"font-weight:bold;text-align:center;font-size:0.9rem;"
+        )
+        for col in df.columns:
+            if col != " ":
+                styles.loc[idx, col] = f"border-left:3px solid {color}22;"
+    return styles
+
+st.dataframe(
+    df_summary.style.apply(_style_summary, axis=None),
+    use_container_width=True,
+    hide_index=True,
+    column_config={" ": st.column_config.TextColumn(width="small")},
+)
 
 # ── 学習曲線の重ね比較 ────────────────────────────────────────────────────────
 st.divider()
@@ -205,10 +250,24 @@ else:
             filtered = [r for r in records if r["split"] == sp and metric_col in r]
             if not filtered:
                 continue
-            label = exp.name if split_filter != "両方" else f"{exp.name} ({sp})"
+            marker = exp_markers[exp.name]
+            label  = (f"{marker}" if split_filter != "両方"
+                      else f"{marker} {sp}")
             chart_series[label] = {r["iteration"]: r[metric_col] for r in filtered}
 
+    # 系列名 → 実験色のマッピング
+    def _series_color(label):
+        for exp_name in selected_names:
+            m = exp_markers[exp_name]
+            if label == m or label.startswith(m + " "):
+                return exp_colors[exp_name]
+        return "#888888"
+
     if chart_series:
+        series_names  = list(chart_series.keys())
+        series_colors = [_series_color(s) for s in series_names]
+        color_scale   = alt.Scale(domain=series_names, range=series_colors)
+
         all_iters = sorted(set(it for vals in chart_series.values() for it in vals))
         rows_long = [
             {"iteration": it, "系列": name, metric_col: vals.get(it)}
@@ -225,7 +284,9 @@ else:
                          axis=alt.Axis(grid=True)),
                 y=alt.Y(f"{metric_col}:Q", title=metric_col,
                          axis=alt.Axis(grid=True)),
-                color=alt.Color("系列:N", legend=alt.Legend(title="")),
+                color=alt.Color("系列:N",
+                                scale=color_scale,
+                                legend=alt.Legend(title="")),
             )
             .properties(height=320)
         )
