@@ -503,6 +503,21 @@ with col3:
     experiment_dir = f"/workspace/experiments/{exp_name}"
     st.caption(f"作成先: `{experiment_dir}`")
 
+# note.md エディタ（実験名に連動してデフォルト内容をリセット）
+_note_key_marker = f"_note_loaded_for_{st.session_state.get('exp_name','')}"
+if st.session_state.get("_note_loaded_marker") != _note_key_marker:
+    _existing_note = Path(f"/workspace/experiments/{st.session_state.get('exp_name','')}/note.md")
+    st.session_state["pl_note"] = _existing_note.read_text(encoding="utf-8") if _existing_note.exists() else ""
+    st.session_state["_note_loaded_marker"] = _note_key_marker
+
+st.text_area(
+    "📝 事前メモ（note.md）",
+    key="pl_note",
+    height=120,
+    placeholder="実験の目的・仮説・試したいこと・注意点など、自由に記入できます。",
+    help="実験開始前にメモを残せます。実験フォルダ内の note.md に保存されます。",
+)
+
 # ── プリセット UI ─────────────────────────────────────────────────────────────
 presets = load_presets()
 with st.expander("📌 設定プリセット（保存・呼び出し）", expanded=False):
@@ -812,6 +827,7 @@ if st.button(
                 "test_iterations": test_iters or [1000, 3000, 7000, 15000, int(iterations)],
                 "eval":            use_eval,
                 "resolution":      resolution,
+                "note_md":         st.session_state.get("pl_note", ""),
             },
         )
         st.success(f"「{exp_name}」をバッチキューに追加しました。「🗂️ バッチキュー」ページから実行できます。")
@@ -829,6 +845,39 @@ if st.button("🚀 パイプラインを開始", type="primary",
         input_dir = str(Path(experiment_dir) / "input")
         log_path = str(Path(experiment_dir) / "extract_log.txt")
         os.makedirs(input_dir, exist_ok=True)
+
+        note_content = st.session_state.get("pl_note", "")
+        note_path = Path(experiment_dir) / "note.md"
+        if note_content or not note_path.exists():
+            note_path.write_text(note_content, encoding="utf-8")
+
+        pipeline_cfg = {
+            "saved_at":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "video_path":      video_path,
+            "fps":             float(fps),
+            "is_360":          is_360,
+            "fov":             fov_val,
+            "out_w":           out_w_val,
+            "out_h":           out_h_val,
+            "angles":          sel_angles,
+            "use_hloc":        use_hloc,
+            "feature_type":    feature_type,
+            "matcher_type":    matcher_type,
+            "pair_method":     pair_method,
+            "retrieval_model": retrieval_model,
+            "num_matched":     num_matched,
+            "camera_model":    camera_model,
+            "use_gpu":         use_gpu,
+            "iterations":      int(iterations),
+            "save_iterations": save_iters or [7000, 30000],
+            "test_iterations": test_iters or [7000, 30000],
+            "eval":            use_eval,
+            "resolution":      resolution,
+        }
+        import json as _json_pl
+        (Path(experiment_dir) / "pipeline_config.json").write_text(
+            _json_pl.dumps(pipeline_cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         if is_360:
             cmd = [

@@ -1,6 +1,7 @@
 # 複数の実験結果を横並びで比較するページ
 # フレーム数・COLMAP状態・PSNR・L1 Loss の学習曲線を重ね表示し、レンダリング画像も並べる
 
+import json
 import re
 from pathlib import Path
 
@@ -202,6 +203,52 @@ def _style_summary(df):
             if col != " ":
                 styles.loc[idx, col] = f"border-left:3px solid {color}22;"
     return styles
+
+# ── パイプライン設定テーブル（pipeline_config.json が存在する実験のみ） ──────
+_cfg_loaded = {}
+for exp in selected_exps:
+    _p = exp / "pipeline_config.json"
+    if _p.exists():
+        try:
+            _cfg_loaded[exp.name] = json.loads(_p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+if _cfg_loaded:
+    _cfg_rows = []
+    for exp in selected_exps:
+        _c = _cfg_loaded.get(exp.name, {})
+        _hloc    = _c.get("use_hloc")
+        _pair    = _c.get("pair_method", "")
+        _iters   = _c.get("iterations")
+        _res     = _c.get("resolution")
+        _res_str = "自動" if _res is None else f"1/{_res}x"
+        _cfg_rows.append({
+            " ":           exp_markers[exp.name],
+            "実験名":      exp.name,
+            "姿勢推定":    ("HLoc" if _hloc else "COLMAP") if _hloc is not None else "-",
+            "特徴点抽出器": (_c.get("feature_type", "-") if _hloc
+                            else _c.get("camera_model", "-")) if _c else "-",
+            "マッチャー":  _c.get("matcher_type", "-") if (_c and _hloc) else "-",
+            "top-K":       str(_c.get("num_matched", "-")) if (_c and _hloc and _pair == "retrieval") else "-",
+            "学習ステップ数": str(_iters) if _iters is not None else "-",
+            "eval":        str(_c.get("eval", "-")) if _c else "-",
+            "解像度":      _res_str if _c else "-",
+        })
+    _df_cfg = pd.DataFrame(_cfg_rows)
+    st.dataframe(
+        _df_cfg.style.apply(_style_summary, axis=None),
+        use_container_width=True,
+        hide_index=True,
+        column_config={" ": st.column_config.TextColumn(width="small")},
+    )
+    if len(_cfg_loaded) < len(selected_exps):
+        _missing = [n for n in selected_names if n not in _cfg_loaded]
+        st.caption(f"⚠️ pipeline_config.json なし（旧形式）: {', '.join(_missing)}")
+else:
+    st.info("選択中の実験に pipeline_config.json が見つかりません。次回のパイプライン実行から自動で保存されます。")
+
+st.caption("▼ 学習スコアサマリー")
 
 st.dataframe(
     df_summary.style.apply(_style_summary, axis=None),

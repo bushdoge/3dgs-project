@@ -121,6 +121,19 @@ def _start_job(job: dict):
     exp   = job["exp_dir"]
     os.makedirs(exp, exist_ok=True)
 
+    note_content = cfg.get("note_md", "")
+    note_path = Path(exp) / "note.md"
+    if note_content or not note_path.exists():
+        note_path.write_text(note_content, encoding="utf-8")
+
+    import json as _json_bq
+    from datetime import datetime as _dt_bq
+    pipeline_cfg = {k: v for k, v in cfg.items() if k != "note_md"}
+    pipeline_cfg.setdefault("saved_at", _dt_bq.now().strftime("%Y-%m-%d %H:%M:%S"))
+    (Path(exp) / "pipeline_config.json").write_text(
+        _json_bq.dumps(pipeline_cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
     if jtype == "pipeline":
         _do_extract(job)
 

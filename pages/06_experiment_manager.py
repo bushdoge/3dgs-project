@@ -49,10 +49,12 @@ st.divider()
 EXPERIMENTS_DIR = Path("/workspace/experiments")
 
 
+@st.cache_data(ttl=120)
 def get_dir_size_mb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1e6
 
 
+@st.cache_data(ttl=60)
 def get_exp_status(exp: Path) -> dict:
     has_frames = (exp / "input").exists() and bool(
         list((exp / "input").glob("*.jpg")) + list((exp / "input").glob("*.png"))
@@ -82,21 +84,24 @@ if not EXPERIMENTS_DIR.exists() or not any(EXPERIMENTS_DIR.iterdir()):
 exps = sorted([p for p in EXPERIMENTS_DIR.iterdir() if p.is_dir()], reverse=True)
 
 rows = []
-for exp in exps:
-    s = get_exp_status(exp)
-    rows.append({
-        "実験名": exp.name,
-        "フレーム抽出": s["フレーム抽出"],
-        "COLMAP": s["COLMAP"],
-        "3DGS学習": s["3DGS学習"],
-        "ディスク使用量": s["ディスク使用量"],
-        "メモ": s["メモ"],
-    })
+_status_cache = {}
+with st.spinner("実験データを読み込み中..."):
+    for exp in exps:
+        s = get_exp_status(exp)
+        _status_cache[exp.name] = s
+        rows.append({
+            "実験名": exp.name,
+            "フレーム抽出": s["フレーム抽出"],
+            "COLMAP": s["COLMAP"],
+            "3DGS学習": s["3DGS学習"],
+            "ディスク使用量": s["ディスク使用量"],
+            "メモ": s["メモ"],
+        })
 
 df = pd.DataFrame(rows)
 
 # ── ディスク使用量サマリー ────────────────────────────────────────────────────
-total_mb = sum(get_dir_size_mb(e) for e in exps)
+total_mb = sum(s["_size_mb"] for s in _status_cache.values())  # get_exp_status の結果を再利用
 disk = shutil.disk_usage("/workspace")
 free_gb = disk.free / 1e9
 used_gb = disk.used / 1e9
@@ -202,7 +207,110 @@ with tab_logs:
 # ── 設定確認タブ ─────────────────────────────────────────────────────────────
 with tab_config:
     import ast
+    import json as _json_cfg
     import yaml
+
+    # ── パイプライン設定（pipeline_config.json） ──────────────────────────────
+    _pipeline_cfg_path = selected_exp / "pipeline_config.json"
+    if _pipeline_cfg_path.exists():
+        st.markdown("#### `pipeline_config.json`　パイプライン設定")
+        try:
+            _pc = _json_cfg.loads(_pipeline_cfg_path.read_text(encoding="utf-8"))
+
+            _PIPELINE_LABELS = {
+                "saved_at":        ("保存日時",          "メタ情報"),
+                "video_path":      ("入力動画",          "フレーム抽出"),
+                "fps":             ("抽出FPS",           "フレーム抽出"),
+                "is_360":          ("360度変換",         "フレーム抽出"),
+                "fov":             ("水平視野角（FOV）",  "フレーム抽出"),
+                "out_w":           ("出力幅",            "フレーム抽出"),
+                "out_h":           ("出力高さ",          "フレーム抽出"),
+                "angles":          ("変換方向",          "フレーム抽出"),
+                "use_hloc":        ("HLoc使用",          "姿勢推定"),
+                "feature_type":    ("特徴点抽出器",       "姿勢推定"),
+                "matcher_type":    ("マッチャー",         "姿勢推定"),
+                "pair_method":     ("ペアリスト方式",     "姿勢推定"),
+                "retrieval_model": ("Retrievalモデル",   "姿勢推定"),
+                "num_matched":     ("top-K",            "姿勢推定"),
+                "camera_model":    ("カメラモデル（COLMAP）", "姿勢推定"),
+                "use_gpu":         ("GPU使用",           "姿勢推定"),
+                "iterations":      ("学習ステップ数",     "3DGS学習"),
+                "save_iterations": ("保存タイミング",     "3DGS学習"),
+                "test_iterations": ("評価タイミング",     "3DGS学習"),
+                "eval":            ("train/test分割",    "3DGS学習"),
+                "resolution":      ("解像度縮小倍率",     "3DGS学習"),
+            }
+            _CAT_ORDER = ["メタ情報", "フレーム抽出", "姿勢推定", "3DGS学習"]
+
+            # カテゴリ別に行を振り分け
+            _pc_cats: dict[str, list] = {}
+            for key, val in _pc.items():
+                if key.startswith("_"):  # _recovered_from 等の内部メタキーはスキップ
+                    continue
+                label, cat = _PIPELINE_LABELS.get(key, (key, "その他"))
+                # 360度変換なしのときは無関係な360設定を非表示
+                if not _pc.get("is_360") and key in ("fov", "out_w", "out_h", "angles"):
+                    continue
+                # HLoc無しのときはHLoc専用設定を非表示
+                if not _pc.get("use_hloc") and key in ("feature_type", "matcher_type",
+                                                         "pair_method", "retrieval_model", "num_matched"):
+                    continue
+                # COLMAP使用時はカメラモデル・GPU を表示
+                if _pc.get("use_hloc") and key in ("camera_model", "use_gpu"):
+                    continue
+                def _fmt_iter(v):
+                    return f"{v // 1000}k" if isinstance(v, int) and v % 1000 == 0 else str(v)
+                if key in ("save_iterations", "test_iterations") and isinstance(val, list):
+                    val_str = ", ".join(_fmt_iter(v) for v in val)
+                elif isinstance(val, list):
+                    val_str = ", ".join(str(v) for v in val)
+                else:
+                    val_str = str(val)
+                _pc_cats.setdefault(cat, []).append({"設定項目": label, "値": val_str})
+
+            for _cat in _CAT_ORDER + ["その他"]:
+                if _cat not in _pc_cats:
+                    continue
+                st.caption(f"**{_cat}**")
+                st.dataframe(
+                    pd.DataFrame(_pc_cats[_cat]),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "設定項目": st.column_config.TextColumn(width="medium"),
+                        "値":       st.column_config.TextColumn(width="large"),
+                    },
+                )
+
+            # 復元元情報があればキャプション表示
+            _recovered_from = _pc.get("_recovered_from")
+            if _recovered_from:
+                st.caption(f"⚠️ このファイルはログから復元されました（取得元: {', '.join(_recovered_from)}）")
+
+        except Exception as _e:
+            st.warning(f"pipeline_config.json の解析に失敗しました: {_e}")
+
+        with st.expander("生JSON", expanded=False):
+            st.code(_pipeline_cfg_path.read_text(encoding="utf-8", errors="replace"), language="json")
+
+    else:
+        st.info("pipeline_config.json が見つかりません。次回のパイプライン実行から自動で保存されます。")
+        if st.button("🔍 ログから設定を復元", key="recover_pipeline_cfg"):
+            import sys as _sys_r
+            _sys_r.path.insert(0, "/workspace/scripts")
+            from recover_pipeline_config import recover as _recover
+            _cfg_recovered, _sources = _recover(selected_exp)
+            if len(_cfg_recovered) > 1:  # saved_at 以外に何かあれば保存
+                _pipeline_cfg_path.write_text(
+                    __import__("json").dumps(_cfg_recovered, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+                st.success(f"復元しました（取得元: {', '.join(_sources) if _sources else 'なし'}）")
+                st.rerun()
+            else:
+                st.warning("ログから読み取れる設定情報がありませんでした。")
+
+    st.divider()
 
     config_path   = selected_exp / "config.yaml"
     cfg_args_list = list((selected_exp / "output").rglob("cfg_args")) \

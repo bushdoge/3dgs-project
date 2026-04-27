@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pycolmap
+
 sys.path.insert(0, "/opt/hloc")
 
 from hloc import (
@@ -94,10 +96,46 @@ def main():
                         features=features_path, matches=matches_path)
 
     # ── [N/N] SfM再構成 ───────────────────────────────────────────────────────
-    print(f"[{total}/{total}] SfM再構成...", flush=True)
-    model = reconstruction.main(
-        sfm_dir, images, sfm_pairs, features_path, matches_path
-    )
+    # ba_global_max_num_images をデフォルト(500)より大きくしてサブサンプリングを無効化する。
+    # これにより "ba_config.NumImages() >= 2 (0 vs. 2)" エラーを回避できる。
+    n_images_for_ba = max(n_images * 2, 9999)
+    mapper_options = {"ba_global_max_num_images": n_images_for_ba}
+    print(f"[{total}/{total}] SfM再構成 (ba_global_max_num_images={n_images_for_ba})...", flush=True)
+
+    model = None
+    try:
+        model = reconstruction.main(
+            sfm_dir, images, sfm_pairs, features_path, matches_path,
+            mapper_options=mapper_options,
+        )
+    except ValueError as e:
+        if "ba_config.NumImages() >= 2" in str(e):
+            # グローバルBAが失敗した場合、ディスクに保存された部分的な再構成を使用する
+            print(f"警告: グローバルBA中にエラーが発生: {e}", file=sys.stderr)
+            print("部分的な再構成を使用しようとしています...", flush=True)
+            models_dir = sfm_dir / "models"
+            best_path = None
+            best_count = 0
+            for cam_bin in sorted(models_dir.glob("*/cameras.bin")):
+                try:
+                    rec = pycolmap.Reconstruction()
+                    rec.read(str(cam_bin.parent))
+                    if rec.num_reg_images() > best_count:
+                        best_count = rec.num_reg_images()
+                        best_path = cam_bin.parent
+                        model = rec
+                except Exception:
+                    continue
+            if model is not None:
+                print(f"部分的な再構成を使用: {best_count} カメラ登録済み", flush=True)
+                for f in best_path.iterdir():
+                    if f.is_file():
+                        shutil.copy2(str(f), str(sfm_dir))
+            else:
+                print("ERROR: 部分的な再構成も見つかりませんでした。", file=sys.stderr)
+                sys.exit(1)
+        else:
+            raise
 
     if model is None:
         print("ERROR: 再構成に失敗しました。", file=sys.stderr)
