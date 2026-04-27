@@ -341,10 +341,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 - 学習が完了したら「📷 結果確認」ページで点群・PSNRグラフ・レンダリングを確認できます。
 - 実験設定・ログは「🗂️ 実験管理」ページで閲覧・メモ編集できます。
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

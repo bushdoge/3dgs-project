@@ -8,7 +8,19 @@ from pathlib import Path
 
 import streamlit as st
 
-_STATE_FILE = "/workspace/tmp/pipeline_state.json"
+_STATE_FILE       = "/workspace/tmp/pipeline_state.json"
+_BATCH_STATE_FILE = "/workspace/tmp/batch_state.json"
+
+# バッチページのステップ名 → ウィジェット用ステップ名
+_BATCH_STEP_MAP = {
+    "extract":    "extracting",
+    "extracting": "extracting",
+    "colmap":     "colmap",
+    "training":   "training",
+    "train":      "training",
+    "render":     "rendering",
+    "rendering":  "rendering",
+}
 
 _STEP_JA = {
     "extracting": "① フレーム抽出",
@@ -23,10 +35,68 @@ _COLMAP_SUB = {
 }
 
 
+def _load_batch_as_state() -> dict:
+    """batch_state.json + queue.json からウィジェット互換の state dict を構築する"""
+    try:
+        bs_path = Path(_BATCH_STATE_FILE)
+        if not bs_path.exists():
+            return {}
+        bs = json.loads(bs_path.read_text(encoding="utf-8"))
+        if not bs.get("active"):
+            return {}
+
+        import sys as _sys_bq
+        if "/workspace" not in _sys_bq.path:
+            _sys_bq.path.insert(0, "/workspace")
+        from queue_helper import load_queue
+        job = next((j for j in load_queue() if j.get("status") == "running"), None)
+        if not job:
+            return {}
+
+        cfg      = job.get("config", {})
+        step     = _BATCH_STEP_MAP.get(bs.get("step", ""), bs.get("step", ""))
+        log_path = bs.get("log", "")
+
+        # ログファイルの作成時刻を開始時刻の近似値として使う
+        start_time = job.get("started_at") or (
+            Path(log_path).stat().st_ctime if log_path and Path(log_path).exists() else time.time()
+        )
+
+        return {
+            "active":         True,
+            "step":           step,
+            "log_path":       log_path,
+            "experiment_dir": job.get("exp_dir", ""),
+            "pid":            bs.get("pid"),
+            "iterations":     cfg.get("iterations", 30000),
+            "is_360":         cfg.get("is_360", False),
+            "use_hloc":       cfg.get("use_hloc", True),
+            "start_time":     start_time,
+            "step_status":    {},
+        }
+    except Exception:
+        return {}
+
+
 def _load_state() -> dict:
+    # 1. パイプラインページのセッション状態
     pl = st.session_state.get("pipeline", {})
-    if pl.get("active"):
+    if pl.get("active") and pl.get("step") not in ("done", "failed", "setup", None):
         return pl
+    # 2. pipeline_state.json（パイプラインページ経由の実行）
+    try:
+        p = Path(_STATE_FILE)
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if data.get("active") and data.get("step") not in ("done", "failed", "setup", None):
+                return data
+    except Exception:
+        pass
+    # 3. batch_state.json（バッチキュー経由の実行）
+    batch = _load_batch_as_state()
+    if batch.get("active"):
+        return batch
+    # 4. 最後の状態（完了・失敗含む）をフォールバックとして返す
     try:
         p = Path(_STATE_FILE)
         if p.exists():

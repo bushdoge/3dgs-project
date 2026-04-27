@@ -48,3 +48,10 @@ pg = st.navigation(
 )
 
 pg.run()
+
+# 全ページ共通のフッター進捗バー
+try:
+    from pipeline_widget import render_sticky_footer
+    render_sticky_footer()
+except Exception:
+    pass

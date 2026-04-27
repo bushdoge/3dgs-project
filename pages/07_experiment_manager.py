@@ -545,10 +545,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 - 削除した実験は**元に戻せません**。必要なデータは事前にバックアップしてください
 - `data/` 配下の元動画は削除されません（実験フォルダのみ削除）
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

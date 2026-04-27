@@ -13,7 +13,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from pipeline_widget import render_pipeline_status
 
 
 SAVE_FILE = "/workspace/tmp/minigame_save.json"
@@ -671,9 +670,6 @@ with right:
                 unsafe_allow_html=True,
             )
 
-# ── パイプライン進捗 ──────────────────────────────────────────────────────────
-with st.expander("🚀 パイプライン進捗", expanded=False):
-    render_pipeline_status(compact=True)
 
 # ── フッター：自動リロード ────────────────────────────────────────────────────
 st.divider()
@@ -704,12 +700,6 @@ with fc3:
 
 # ページロード完了後に自動セーブ & 1秒後に再実行
 save_game(g)
-
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass
 
 time.sleep(1)
 st.rerun()

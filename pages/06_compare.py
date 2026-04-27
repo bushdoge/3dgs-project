@@ -415,10 +415,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 - 「📷 結果確認」ページでレンダリング実行後に表示されます
 - 実験フォルダ内の `output/render/` に画像が保存されています
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

@@ -995,10 +995,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 ### プリセット
 よく使う設定を名前をつけて保存できます。評価タイミングの選択状態もプリセットに含まれます。
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

@@ -890,15 +890,6 @@ with tab_pokedex:
             st.markdown(name_str)
             st.caption(evo_info["desc"])
             st.caption(f"条件: {EVO_CONDITIONS.get(evo_name, '?')}")
-
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass
-
 # ── 自動更新（1秒ごと）────────────────────────────────────────────────────────
 time.sleep(1)
 st.rerun()

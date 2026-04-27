@@ -533,10 +533,4 @@ while True:
     if not auto:
         break
 
-    try:
-        from pipeline_widget import render_sticky_footer
-        render_sticky_footer()
-    except Exception:
-        pass
-
     time.sleep(refresh_rate)

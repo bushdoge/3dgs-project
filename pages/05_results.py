@@ -761,10 +761,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 - `point_cloud/` 以下の `.ply` ファイルを読み込んで簡易可視化します。
 - ブラウザ上での3D確認が可能です（重いシーンでは表示に時間がかかります）。
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

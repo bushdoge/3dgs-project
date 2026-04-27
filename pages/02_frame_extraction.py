@@ -346,10 +346,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 - `experiments/<日時>_<シーン名>/input/` に連番画像が保存されます。
 - フレーム抽出後は「📷 姿勢推定」ページへ進んでください。
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

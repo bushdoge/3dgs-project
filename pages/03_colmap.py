@@ -471,10 +471,3 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 | 5000枚 | 数十時間 | 3〜6時間 |
 | 12000枚 | 現実的でない | 15〜25時間 |
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass

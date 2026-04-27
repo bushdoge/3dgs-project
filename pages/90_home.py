@@ -252,14 +252,6 @@ with st.expander("使用方法を表示する", expanded=False):
 | ⚗️ ミニゲーム | ガウシアンを育てるアイドルゲーム |
 | 🐾 ガウスくん | たまごっち風ペット育成ゲーム |
 """)
-
-# ── 固定フッター ──────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass
-
 if _pipeline_active:
     time.sleep(5)
     st.rerun()

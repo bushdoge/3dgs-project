@@ -624,8 +624,3 @@ if _need_rerun:
     st.rerun()
 
 # ─── 固定フッター ─────────────────────────────────────────────────────────────
-try:
-    from pipeline_widget import render_sticky_footer
-    render_sticky_footer()
-except Exception:
-    pass
