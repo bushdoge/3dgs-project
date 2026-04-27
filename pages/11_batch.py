@@ -11,25 +11,61 @@ from pathlib import Path
 
 import streamlit as st
 
+import json as _json
+
 sys.path.insert(0, "/workspace")
 from queue_helper import (
     QUEUE_FILE, JOB_ICONS,
     load_queue, save_queue, pending_size,
 )
 
-# ─── セッション初期化 ──────────────────────────────────────────────────────────
+BATCH_STATE_FILE = "/workspace/tmp/batch_state.json"
 
-if "bq_active" not in st.session_state: st.session_state.bq_active = False
-if "bq_proc"   not in st.session_state: st.session_state.bq_proc   = None
-if "bq_pid"    not in st.session_state: st.session_state.bq_pid    = None
-if "bq_step"   not in st.session_state: st.session_state.bq_step   = ""
-if "bq_log"    not in st.session_state: st.session_state.bq_log    = None
+# ─── バッチ実行状態の永続化 ────────────────────────────────────────────────────
 
-# 実行中でない場合は常にファイルから読み込む（他ページの追加を反映）
-if not st.session_state.bq_active:
-    st.session_state.bq_queue = load_queue()
-elif "bq_queue" not in st.session_state:
-    st.session_state.bq_queue = load_queue()
+def _save_batch_state():
+    Path(BATCH_STATE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(BATCH_STATE_FILE).write_text(_json.dumps({
+        "active": st.session_state.bq_active,
+        "pid":    st.session_state.bq_pid,
+        "step":   st.session_state.bq_step,
+        "log":    st.session_state.bq_log,
+    }, ensure_ascii=False), encoding="utf-8")
+
+def _load_batch_state() -> dict:
+    try:
+        p = Path(BATCH_STATE_FILE)
+        if p.exists():
+            return _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _clear_batch_state():
+    try:
+        Path(BATCH_STATE_FILE).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+# ─── セッション初期化（ページ再訪時にファイルから復元） ───────────────────────
+
+if "bq_active" not in st.session_state:
+    _bs = _load_batch_state()
+    if _bs.get("active"):
+        st.session_state.bq_active = True
+        st.session_state.bq_pid    = _bs.get("pid")
+        st.session_state.bq_step   = _bs.get("step", "")
+        st.session_state.bq_log    = _bs.get("log")
+        st.session_state.bq_proc   = None
+    else:
+        st.session_state.bq_active = False
+        st.session_state.bq_pid    = None
+        st.session_state.bq_step   = ""
+        st.session_state.bq_log    = None
+        st.session_state.bq_proc   = None
+
+# キューは常にファイルから読み込む（他ページの追加・バッチ実行中の追加も反映）
+st.session_state.bq_queue = load_queue()
 
 # ─── プロセス管理 ─────────────────────────────────────────────────────────────
 
@@ -76,6 +112,7 @@ def _launch(job: dict, step: str, cmd: list, log_path: str):
     job["current_step"] = step
     job["log_path"]     = log_path
     save_queue(st.session_state.bq_queue)
+    _save_batch_state()
 
 def _start_job(job: dict):
     jtype = job.get("type", "pipeline")
@@ -255,6 +292,7 @@ def _run_next():
     st.session_state.bq_active = False
     st.session_state.bq_step   = ""
     save_queue(q)
+    _clear_batch_state()
 
 def _stop_batch():
     proc = st.session_state.bq_proc
@@ -271,6 +309,7 @@ def _stop_batch():
             job["status"] = "pending"
             job["current_step"] = ""
     save_queue(st.session_state.bq_queue)
+    _clear_batch_state()
 
 # ─── UI ──────────────────────────────────────────────────────────────────────
 st.title("🗂️ バッチキュー")
