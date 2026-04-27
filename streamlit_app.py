@@ -23,25 +23,25 @@ st.set_page_config(
 pg = st.navigation(
     {
         "": [
-            st.Page("pages/home.py",    title="ホーム",           icon="🏠", default=True),
-            st.Page("pages/monitor.py", title="システムモニター", icon="⚡"),
+            st.Page("pages/90_home.py",    title="ホーム",           icon="🏠", default=True),
+            st.Page("pages/91_monitor.py", title="システムモニター", icon="⚡"),
         ],
         "🧪 パイプライン": [
-            st.Page("pages/00_pipeline.py",         title="Pipeline Runner", icon="🚀"),
-            st.Page("pages/11_batch.py",            title="バッチ実験",       icon="🗂️"),
-            st.Page("pages/01_frame_extraction.py", title="フレーム抽出",    icon="🎞️"),
-            st.Page("pages/02_colmap.py",           title="姿勢推定",         icon="📷"),
-            st.Page("pages/03_training.py",         title="3DGS学習",         icon="🧠"),
+            st.Page("pages/00_pipeline.py",          title="Pipeline Runner", icon="🚀"),
+            st.Page("pages/01_batch.py",             title="バッチ実験",       icon="🗂️"),
+            st.Page("pages/02_frame_extraction.py",  title="フレーム抽出",    icon="🎞️"),
+            st.Page("pages/03_colmap.py",            title="姿勢推定",         icon="📷"),
+            st.Page("pages/04_training.py",          title="3DGS学習",         icon="🧠"),
         ],
         "📊 結果・管理": [
-            st.Page("pages/04_results.py",            title="結果確認",   icon="🖼️"),
-            st.Page("pages/05_compare.py",            title="実験比較",   icon="📊"),
-            st.Page("pages/06_experiment_manager.py", title="実験管理",   icon="🗂️"),
+            st.Page("pages/05_results.py",           title="結果確認",   icon="🖼️"),
+            st.Page("pages/06_compare.py",           title="実験比較",   icon="📊"),
+            st.Page("pages/07_experiment_manager.py", title="実験管理",  icon="🗂️"),
         ],
         "🎮 ゲーム": [
-            st.Page("pages/07_minigame.py", title="ミニゲーム", icon="⚗️"),
-            st.Page("pages/08_pet.py",      title="ガウスくん", icon="🐾"),
-            st.Page("pages/09_poker.py",    title="ポーカー",   icon="🃏"),
+            st.Page("pages/70_minigame.py", title="ミニゲーム", icon="⚗️"),
+            st.Page("pages/71_pet.py",      title="ガウスくん", icon="🐾"),
+            st.Page("pages/72_poker.py",    title="ポーカー",   icon="🃏"),
         ],
     },
     expanded=True,
