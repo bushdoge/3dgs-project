@@ -27,8 +27,8 @@ pg = st.navigation(
             st.Page("pages/91_monitor.py", title="システムモニター", icon="⚡"),
         ],
         "🧪 パイプライン": [
-            st.Page("pages/00_pipeline.py",          title="Pipeline Runner", icon="🚀"),
-            st.Page("pages/01_batch.py",             title="バッチ実験",       icon="🗂️"),
+            st.Page("pages/00_batch.py",    title="キュー",         icon="🗂️"),
+            st.Page("pages/01_pipeline.py", title="パイプライン",   icon="🚀"),
             st.Page("pages/02_frame_extraction.py",  title="フレーム抽出",    icon="🎞️"),
             st.Page("pages/03_colmap.py",            title="姿勢推定",         icon="📷"),
             st.Page("pages/04_training.py",          title="3DGS学習",         icon="🧠"),
