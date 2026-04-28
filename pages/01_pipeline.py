@@ -1,21 +1,17 @@
-# フレーム抽出→COLMAP→3DGS学習を一括で自動実行するパイプラインページ
-# 各ステップの完了を自動検知して次のステップに進む
+# パイプライン設定ページ
+# 実験設定を行い、バッチキューに追加する。実行はデーモンまたはキューページが担当する。
 
 import json
 import os
-import re
-import signal
 import sys
-import time
-import subprocess
-from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
+sys.path.insert(0, "/workspace")
 
-PIPELINE_STATE_FILE = "/workspace/tmp/pipeline_state.json"
-PRESETS_FILE        = "/workspace/tmp/pipeline_presets.json"
+PRESETS_FILE     = "/workspace/tmp/pipeline_presets.json"
+DAEMON_PID_FILE  = "/workspace/tmp/batch_daemon.pid"
 
 # ── プリセット管理 ───────────────────────────────────────────────────────────
 
@@ -34,395 +30,48 @@ def save_presets(presets: dict):
         json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-# ── パイプライン状態の永続化 ─────────────────────────────────────────────────
+# ── デーモン状態 ──────────────────────────────────────────────────────────────
 
-def save_pipeline_state(state: dict):
-    """Popenオブジェクトを除いたパイプライン状態をJSONに保存する"""
-    serializable = {k: v for k, v in state.items() if k != "proc"}
-    Path(PIPELINE_STATE_FILE).parent.mkdir(parents=True, exist_ok=True)
-    Path(PIPELINE_STATE_FILE).write_text(
-        json.dumps(serializable, ensure_ascii=False), encoding="utf-8"
+def _daemon_alive() -> bool:
+    try:
+        p = Path(DAEMON_PID_FILE)
+        if not p.exists():
+            return False
+        pid = int(p.read_text().strip())
+        status = Path(f"/proc/{pid}/status")
+        if not status.exists():
+            return False
+        for line in status.read_text().splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line
+        return False
+    except Exception:
+        return False
+
+def _start_daemon():
+    import subprocess
+    subprocess.Popen(
+        [sys.executable, "/workspace/scripts/batch_daemon.py"],
+        stdout=open("/workspace/tmp/batch_daemon.log", "a"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
 
-def load_pipeline_state() -> dict:
-    """保存されたパイプライン状態を読み込む。なければNoneを返す"""
-    try:
-        if Path(PIPELINE_STATE_FILE).exists():
-            data = json.loads(Path(PIPELINE_STATE_FILE).read_text(encoding="utf-8"))
-            data["proc"] = None  # 再起動後はPopenなし、pidで代替
-            return data
-    except Exception:
-        pass
-    return None
-
-def clear_pipeline_state():
-    """パイプライン状態ファイルを削除する"""
-    p = Path(PIPELINE_STATE_FILE)
-    if p.exists():
-        p.unlink()
-
-# ── セッション状態の初期化 ────────────────────────────────────────────────────
-DEFAULT_PIPELINE = {
-    "active": False,
-    "step": "setup",       # setup / extracting / colmap / training / done / failed
-    "step_status": {},     # {step_name: "running" | "done" | "error"}
-    "experiment_dir": None,
-    "video_path": None,
-    # フレーム抽出
-    "fps": 2.0,
-    "is_360": False,
-    "fov": 90,
-    "out_w": 1024,
-    "out_h": 1024,
-    "angles": [(0, 0), (90, 0), (180, 0), (270, 0)],
-    # 姿勢推定
-    "use_hloc": False,
-    "feature_type": "superpoint_aachen",
-    "matcher_type": "superpoint+lightglue",
-    "pair_method": "exhaustive",
-    "retrieval_model": "netvlad",
-    "num_matched": 20,
-    "camera_model": "OPENCV",
-    "use_gpu": True,
-    # 学習
-    "iterations": 30000,
-    "save_iterations": [7000, 30000],
-    "test_iterations": [7000, 30000],
-    "eval": False,
-    "resolution": None,   # None = VRAM自動判定
-    "proc": None,
-    "pid": None,       # サブプロセスのPID（再起動後の復元用）
-    "log_path": None,
-    "error_msg": None,
-    "start_time": None,
-    "step_times": {},
-}
-
-if "pipeline" not in st.session_state:
-    saved = load_pipeline_state()
-    if saved and saved.get("active"):
-        st.session_state.pipeline = saved
-        st.session_state._pipeline_restored = True
-    else:
-        st.session_state.pipeline = DEFAULT_PIPELINE.copy()
-
-pl = st.session_state.pipeline
+# ── セッション状態初期化 ──────────────────────────────────────────────────────
 
 if "pl_selected_test_iters" not in st.session_state:
     st.session_state["pl_selected_test_iters"] = {1000, 3000, 7000, 15000, 30000}
 
-
-def step_badge(name, status):
-    colors = {
-        "waiting": ("#888", "⏳"),
-        "running": ("#00aaff", "🔄"),
-        "done": ("#00cc66", "✅"),
-        "error": ("#ff4444", "❌"),
-    }
-    color, icon = colors.get(status, ("#888", "⏳"))
-    st.markdown(
-        f'<span style="color:{color};font-weight:bold">{icon} {name}</span>',
-        unsafe_allow_html=True,
-    )
-
-
-def get_log_tail(log_path, n=30):
-    p = Path(log_path)
-    if not p.exists():
-        return ""
-    text = p.read_text(errors="replace")
-    # \r を改行として扱い、空行を除いて末尾n行を返す（省略なし）
-    lines = [l for l in text.replace("\r", "\n").splitlines() if l.strip()]
-    return "\n".join(lines[-n:])
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  ステップ進行ロジック
-# ════════════════════════════════════════════════════════════════════════════
-
-def _get_proc_starttime(pid) -> str | None:
-    """/proc/<pid>/stat の starttime フィールドを返す（PID再利用検出用）"""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        return stat.split()[21]  # 22番目フィールド（0-indexed: 21）
-    except Exception:
-        return None
-
-
-def _pid_returncode(pid) -> int | None:
-    """PIDのみでプロセスの終了を確認する（Streamlit再起動後の復元用）。
-    実行中: None、終了（成功）: 0、終了（エラー）: 1 を返す。"""
-    if not pid:
-        return None
-
-    status_path = Path(f"/proc/{pid}/status")
-    if status_path.exists():
-        try:
-            # PID再利用チェック: 起動時刻が保存値と一致するか確認
-            saved_starttime = pl.get("proc_starttime")
-            if saved_starttime:
-                current_starttime = _get_proc_starttime(pid)
-                if current_starttime and current_starttime != str(saved_starttime):
-                    # 別プロセスがPIDを再利用している → 元のプロセスは終了済み
-                    pass  # ログ判定へ
-                else:
-                    # 同じプロセス or 時刻不明 → Stateで判断
-                    for line in status_path.read_text().splitlines():
-                        if line.startswith("State:"):
-                            if "Z" in line:
-                                break  # ゾンビ = 終了済み → ログ判定へ
-                            return None  # 生きているプロセス
-            else:
-                # 起動時刻未保存（旧形式の状態ファイル）→ 従来どおり
-                for line in status_path.read_text().splitlines():
-                    if line.startswith("State:"):
-                        if "Z" in line:
-                            break
-                        return None
-        except OSError:
-            pass
-
-    # プロセスが消えた or ゾンビ or PID再利用 → ログ末尾でエラー判定
-    log_path = pl.get("log_path", "")
-    if log_path and Path(log_path).exists():
-        tail = Path(log_path).read_text(errors="replace").split("\n")[-15:]
-        for line in tail:
-            if "ERROR:" in line or ("error" in line.lower() and "failed" in line.lower()):
-                return 1
-    return 0
-
-
-def advance_pipeline():
-    """現在のステップを確認し、完了していれば次のステップを開始する"""
-    proc = pl["proc"]
-    pid  = pl.get("pid")
-
-    # プロセスの終了コードを取得（Popenあり / PIDのみ の両方に対応）
-    if proc is not None:
-        retcode = proc.poll()
-    else:
-        retcode = _pid_returncode(pid)
-
-    if retcode is None:
-        return  # まだ実行中
-
-    step = pl["step"]
-
-    if retcode != 0:
-        pl["step_status"][step] = "error"
-        pl["error_msg"] = f"ステップ「{step}」がエラーで終了しました（終了コード: {retcode}）"
-        pl["step"] = "failed"
-        pl["proc"] = None
-        save_pipeline_state(pl)
-        return
-
-    pl["step_status"][step] = "done"
-    pl["step_times"][step]  = time.time()
-    pl["proc"] = None
-
-    if step == "extracting":
-        start_colmap()
-    elif step == "colmap":
-        start_training()
-    elif step == "training":
-        pl["step"] = "done"
-        pl["pid"]  = None
-        save_pipeline_state(pl)
-
-
-def _write_settings_header(log_file, step_label: str):
-    """ログファイルの先頭に実験設定を書き込む"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    angles_str = "  ".join(f"y={y}/p={p}" for y, p in pl.get("angles", []))
-    save_iters = ", ".join(str(i) for i in pl.get("save_iterations", []))
-    test_iters = ", ".join(str(i) for i in pl.get("test_iterations", []))
-    colmap_method = "HLoc" if pl.get("use_hloc") else "COLMAP"
-
-    lines = [
-        "=" * 64,
-        f"  実験設定  [{step_label}]  {now}",
-        "=" * 64,
-        f"  実験ディレクトリ : {pl.get('experiment_dir', '-')}",
-        f"  入力動画/ソース  : {pl.get('video_path', '-')}",
-        "",
-        "  [フレーム抽出]",
-    ]
-    if pl.get("is_360"):
-        lines += [
-            f"    360度変換 : あり  FOV={pl.get('fov')}°  {pl.get('out_w')}x{pl.get('out_h')}",
-            f"    向き      : {angles_str if angles_str else '-'}",
-        ]
-    else:
-        lines.append("    360度変換 : なし（通常動画）")
-    lines.append(f"    FPS       : {pl.get('fps')}")
-    lines += [
-        "",
-        f"  [カメラ推定 ({colmap_method})]",
-    ]
-    if pl.get("use_hloc"):
-        lines += [
-            f"    特徴量    : {pl.get('feature_type')}",
-            f"    マッチング: {pl.get('matcher_type')}",
-            f"    ペアリスト: {pl.get('pair_method')}  "
-            f"(retrieval={pl.get('retrieval_model')}, {pl.get('num_matched')} pairs)",
-        ]
-    else:
-        lines += [
-            f"    カメラモデル: {pl.get('camera_model')}",
-            f"    GPU         : {'あり' if pl.get('use_gpu') else 'なし'}",
-        ]
-    res = pl.get("resolution")
-    res_label = f"{res}x 縮小" if res else "自動（VRAM量から判定）"
-    lines += [
-        "",
-        "  [3DGS学習]",
-        f"    イテレーション : {pl.get('iterations')}",
-        f"    保存           : {save_iters}",
-        f"    テスト         : {test_iters}",
-        f"    解像度         : {res_label}",
-        "=" * 64,
-        "",
-    ]
-    log_file.write("\n".join(lines) + "\n")
-    log_file.flush()
-
-
-def start_colmap():
-    exp_dir = pl["experiment_dir"]
-    log_path = str(Path(exp_dir) / "colmap_log.txt")
-    pl["log_path"] = log_path
-    pl["step"] = "colmap"
-    pl["step_status"]["colmap"] = "running"
-
-    if pl["use_hloc"]:
-        cmd = [
-            sys.executable, "/workspace/scripts/run_hloc.py",
-            "--source_path",    exp_dir,
-            "--feature_type",   pl["feature_type"],
-            "--matcher_type",   pl["matcher_type"],
-            "--pair_method",    pl.get("pair_method", "exhaustive"),
-            "--retrieval_model", pl.get("retrieval_model", "netvlad"),
-            "--num_matched",    str(pl.get("num_matched", 20)),
-        ]
-    else:
-        cmd = [
-            sys.executable, "/workspace/scripts/run_colmap.py",
-            "--source_path", exp_dir,
-            "--camera_model", pl["camera_model"],
-        ]
-        if not pl["use_gpu"]:
-            cmd.append("--no_gpu")
-
-    log_file = open(log_path, "w")
-    _write_settings_header(log_file, "カメラ推定")
-    pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-    pl["pid"]  = pl["proc"].pid
-    pl["proc_starttime"] = _get_proc_starttime(pl["pid"])
-    save_pipeline_state(pl)
-
-
-def start_training():
-    exp_dir = pl["experiment_dir"]
-    model_path = str(Path(exp_dir) / "output")
-    log_path = str(Path(model_path) / "train_log.txt")
-    os.makedirs(model_path, exist_ok=True)
-    pl["log_path"] = log_path
-    pl["step"] = "training"
-    pl["step_status"]["training"] = "running"
-
-    cmd = [
-        sys.executable, "/workspace/scripts/run_train.py",
-        "--source", exp_dir,
-        "--model_path", model_path,
-        "--iterations", str(pl["iterations"]),
-        "--save_iterations", *[str(i) for i in pl["save_iterations"]],
-        "--test_iterations", *[str(i) for i in pl["test_iterations"]],
-    ]
-    if pl.get("eval"):
-        cmd.append("--eval")
-    if pl.get("resolution") is not None:
-        cmd += ["--resolution", str(pl["resolution"])]
-    log_file = open(log_path, "w")
-    _write_settings_header(log_file, "3DGS学習")
-    pl["proc"] = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-    pl["pid"]  = pl["proc"].pid
-    pl["proc_starttime"] = _get_proc_starttime(pl["pid"])
-    save_pipeline_state(pl)
-
-
 # ════════════════════════════════════════════════════════════════════════════
 #  UI
 # ════════════════════════════════════════════════════════════════════════════
-st.title("🚀 パイプライン実行")
-st.caption("フレーム抽出 → COLMAP → 3DGS学習 を自動で順番に実行します")
-
-# ── ステップ進捗バー ──────────────────────────────────────────────────────────
-steps = ["extracting", "colmap", "training"]
-step_labels = ["① フレーム抽出", "② COLMAP", "③ 3DGS学習"]
-
-col_steps = st.columns(3)
-for col, step, label in zip(col_steps, steps, step_labels):
-    with col:
-        status = pl["step_status"].get(step, "waiting")
-        if pl["step"] == step and status != "done":
-            status = "running"
-        step_badge(label, status)
+st.title("🚀 パイプライン設定")
+st.caption("実験を設定してキューに追加します。実行はバックグラウンドデーモンが自動で行います。")
 
 st.divider()
 
 # ════════════════════════════════════════════════════════════════════════════
-#  実行ステータスバナー（設定フォームより上に常時表示）
-# ════════════════════════════════════════════════════════════════════════════
-if st.session_state.get("_pipeline_restored"):
-    st.info("🔄 Streamlit 再起動前のパイプライン実行状態を復元しました。")
-    del st.session_state["_pipeline_restored"]
-
-if pl["active"]:
-    advance_pipeline()
-    current_step = pl["step"]
-
-    if current_step == "done":
-        exp_dir = pl["experiment_dir"]
-        elapsed = time.time() - pl["start_time"]
-        st.success(
-            f"🎉 パイプライン完了！　実験: `{Path(exp_dir).name}`　"
-            f"総時間: {elapsed/60:.1f} 分　→「🖼️ 結果確認」で確認できます"
-        )
-        if st.button("✕ クリア", key="pl_clear_done"):
-            clear_pipeline_state()
-            st.session_state.pipeline = DEFAULT_PIPELINE.copy()
-            st.rerun()
-
-    elif current_step == "failed":
-        st.error(f"❌ {pl['error_msg']}")
-        if st.button("✕ リセット", key="pl_clear_failed"):
-            clear_pipeline_state()
-            st.session_state.pipeline = DEFAULT_PIPELINE.copy()
-            st.rerun()
-
-    else:
-        step_ja = {"extracting": "フレーム抽出", "colmap": "COLMAP", "training": "3DGS学習"}.get(current_step, current_step)
-        scene   = Path(pl.get("experiment_dir", "")).name
-        elapsed = time.time() - pl.get("start_time", time.time())
-        ba, bb  = st.columns([5, 1])
-        ba.info(f"🔄 **{step_ja}** 実行中　｜　{scene}　｜　{elapsed/60:.1f} 分経過　→ 詳細は「🗂️ バッチキュー」ページ")
-        if bb.button("⏹ 中断", key="pl_stop"):
-            proc = pl["proc"]
-            pid  = pl.get("pid")
-            kill_pid = proc.pid if (proc and proc.poll() is None) else pid
-            if kill_pid:
-                try: os.kill(kill_pid, signal.SIGTERM)
-                except Exception: pass
-            clear_pipeline_state()
-            st.session_state.pipeline = DEFAULT_PIPELINE.copy()
-            st.rerun()
-        time.sleep(3)
-        st.rerun()
-
-st.divider()
-
-# ════════════════════════════════════════════════════════════════════════════
-#  設定ビュー（常に表示）
+#  設定ビュー
 # ════════════════════════════════════════════════════════════════════════════
 st.subheader("🎬 入力動画の選択")
 
@@ -460,7 +109,6 @@ if is_360:
     with col_c:
         fps = st.number_input("抽出FPS", min_value=0.1, max_value=10.0, value=1.0, step=0.5)
 
-    # 8×3 方向選択グリッド（水平45°刻み × 垂直-30°/0°/+30°）
     st.markdown("**変換する方向を選択（水平角 × 垂直角）**")
     YAW_ANGLES   = [0, 45, 90, 135, 180, 225, 270, 315]
     PITCH_ANGLES = [30, 0, -30]
@@ -493,10 +141,8 @@ st.subheader("🏷️ 実験名の設定")
 col3, col4 = st.columns(2)
 with col3:
     scene_name = Path(video_path).stem if video_path else "scene"
-    # 動画が変わったときだけデフォルト名を再生成（それ以外はユーザー編集を維持）
     if st.session_state.get("_exp_scene") != scene_name or "exp_name" not in st.session_state:
         st.session_state["_exp_scene"] = scene_name
-        import sys as _sys2; _sys2.path.insert(0, "/workspace")
         from queue_helper import next_exp_name as _nxt
         st.session_state["exp_name"] = _nxt(scene_name)
     exp_name = st.text_input("実験フォルダ名", key="exp_name")
@@ -554,7 +200,6 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
                 st.toast(f"プリセット「{sel_preset}」を削除しました。")
                 st.rerun()
 
-        # プリセット内容をサマリー表示
         _p = presets.get(sel_preset, {})
         _sfm = "HLoc" if _p.get("use_hloc") else "COLMAP"
         _feat = _p.get("feature_type", "-") if _p.get("use_hloc") else _p.get("camera_model", "COLMAP内蔵")
@@ -600,23 +245,20 @@ with st.expander("📌 設定プリセット（保存・呼び出し）", expand
 
 st.subheader("⚙️ 姿勢推定（Step 2）設定")
 
-# 特徴量プリセット
 PRESETS = [
-    ("COLMAP\n（標準）",         False, None,             None),
+    ("COLMAP\n（標準）",         False, None,               None),
     ("SuperPoint\n+LightGlue",  True,  "superpoint_aachen", "superpoint+lightglue"),
     ("SuperPoint\n+SuperGlue",  True,  "superpoint_aachen", "superglue"),
-    ("DISK\n+LightGlue",        True,  "disk",           "disk+lightglue"),
-    ("SIFT\n+NN",               True,  "sift",           "NN-ratio"),
+    ("DISK\n+LightGlue",        True,  "disk",              "disk+lightglue"),
+    ("SIFT\n+NN",               True,  "sift",              "NN-ratio"),
 ]
 st.caption("▼ プリセット（クリックで下の設定に反映）")
 preset_cols = st.columns(len(PRESETS))
 for col, (label, hloc, feat, matcher) in zip(preset_cols, PRESETS):
     if col.button(label, use_container_width=True, key=f"pl_preset_{label}"):
         st.session_state["pl_use_hloc"] = hloc
-        if feat:
-            st.session_state["pl_feature"] = feat
-        if matcher:
-            st.session_state["pl_matcher"] = matcher
+        if feat:    st.session_state["pl_feature"] = feat
+        if matcher: st.session_state["pl_matcher"] = matcher
         st.rerun()
 
 col_sfm1, col_sfm2, col_sfm3 = st.columns(3)
@@ -785,19 +427,44 @@ _res_label = st.selectbox(
 )
 resolution = _res_options[_res_label]
 if resolution == 1:
-    resolution = None  # 1x = 縮小なし = None扱い
+    resolution = None
 st.session_state["pl_resolution"] = resolution
 
 st.divider()
 
-# ── キューに追加 ──────────────────────────────────────────────────────────────
-import sys as _sys; _sys.path.insert(0, "/workspace")
+# ── キューに追加して実行 ──────────────────────────────────────────────────────
 from queue_helper import add_to_queue as _add_q, pending_size as _psize
 
+_job_config = {
+    "video_path":      video_path,
+    "fps":             float(fps),
+    "is_360":          is_360,
+    "fov":             fov_val,
+    "out_w":           out_w_val,
+    "out_h":           out_h_val,
+    "angles":          sel_angles,
+    "use_hloc":        use_hloc,
+    "camera_model":    camera_model,
+    "feature_type":    feature_type,
+    "matcher_type":    matcher_type,
+    "pair_method":     pair_method,
+    "retrieval_model": retrieval_model,
+    "num_matched":     num_matched,
+    "iterations":      int(iterations),
+    "save_iterations": save_iters or [7000, int(iterations)],
+    "test_iterations": test_iters or [1000, 3000, 7000, 15000, int(iterations)],
+    "eval":            use_eval,
+    "resolution":      resolution,
+    "note_md":         st.session_state.get("pl_note", ""),
+}
+
+_can_submit = bool(video_path and exp_name)
+
 if st.button(
-    f"📋 バッチキューに追加（待ち: {_psize()} 件）",
-    disabled=not (video_path and exp_name),
+    f"🚀 キューに追加（待ち: {_psize()} 件）",
+    disabled=not _can_submit,
     use_container_width=True,
+    type="primary",
 ):
     if not os.path.exists(video_path):
         st.error(f"動画ファイルが見つかりません: {video_path}")
@@ -807,138 +474,16 @@ if st.button(
             label=f"パイプライン {fps}fps / {int(iterations):,}iter",
             exp_name=exp_name,
             exp_dir=experiment_dir,
-            config={
-                "video_path":      video_path,
-                "fps":             float(fps),
-                "is_360":          is_360,
-                "fov":             fov_val,
-                "out_w":           out_w_val,
-                "out_h":           out_h_val,
-                "angles":          sel_angles,
-                "use_hloc":        use_hloc,
-                "camera_model":    camera_model,
-                "feature_type":    feature_type,
-                "matcher_type":    matcher_type,
-                "pair_method":     pair_method,
-                "retrieval_model": retrieval_model,
-                "num_matched":     num_matched,
-                "iterations":      int(iterations),
-                "save_iterations": save_iters or [7000, int(iterations)],
-                "test_iterations": test_iters or [1000, 3000, 7000, 15000, int(iterations)],
-                "eval":            use_eval,
-                "resolution":      resolution,
-                "note_md":         st.session_state.get("pl_note", ""),
-            },
+            config=_job_config,
         )
-        st.success(f"「{exp_name}」をバッチキューに追加しました。「🗂️ バッチキュー」ページから実行できます。")
+        # デーモンが止まっていれば自動起動
+        if not _daemon_alive():
+            _start_daemon()
+            st.success(f"「{exp_name}」をキューに追加し、デーモンを起動しました。ブラウザを閉じても実行が続きます。")
+        else:
+            st.success(f"「{exp_name}」をキューに追加しました。デーモンが自動で実行します。")
 
 st.divider()
-
-st.error("⚠️ 学習はGPUを長時間占有します。他の処理が動いていないか確認してください。")
-confirm = st.checkbox("確認しました。パイプラインを開始します。")
-
-if st.button("🚀 パイプラインを開始", type="primary",
-             disabled=not (video_path and exp_name and confirm)):
-    if not os.path.exists(video_path):
-        st.error(f"動画ファイルが見つかりません: {video_path}")
-    else:
-        input_dir = str(Path(experiment_dir) / "input")
-        log_path = str(Path(experiment_dir) / "extract_log.txt")
-        os.makedirs(input_dir, exist_ok=True)
-
-        note_content = st.session_state.get("pl_note", "")
-        note_path = Path(experiment_dir) / "note.md"
-        if note_content or not note_path.exists():
-            note_path.write_text(note_content, encoding="utf-8")
-
-        pipeline_cfg = {
-            "saved_at":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "video_path":      video_path,
-            "fps":             float(fps),
-            "is_360":          is_360,
-            "fov":             fov_val,
-            "out_w":           out_w_val,
-            "out_h":           out_h_val,
-            "angles":          sel_angles,
-            "use_hloc":        use_hloc,
-            "feature_type":    feature_type,
-            "matcher_type":    matcher_type,
-            "pair_method":     pair_method,
-            "retrieval_model": retrieval_model,
-            "num_matched":     num_matched,
-            "camera_model":    camera_model,
-            "use_gpu":         use_gpu,
-            "iterations":      int(iterations),
-            "save_iterations": save_iters or [7000, 30000],
-            "test_iterations": test_iters or [7000, 30000],
-            "eval":            use_eval,
-            "resolution":      resolution,
-        }
-        import json as _json_pl
-        (Path(experiment_dir) / "pipeline_config.json").write_text(
-            _json_pl.dumps(pipeline_cfg, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-        if is_360:
-            cmd = [
-                sys.executable, "/workspace/scripts/convert_360.py",
-                "--input", video_path,
-                "--output", input_dir,
-                "--fov", str(fov_val),
-                "--width", str(out_w_val),
-                "--height", str(out_h_val),
-                "--fps", str(fps),
-                "--angles", *[f"{y},{p}" for y, p in sel_angles],
-            ]
-        else:
-            cmd = [
-                sys.executable, "/workspace/scripts/extract_frames.py",
-                "--input", video_path,
-                "--output", input_dir,
-                "--fps", str(fps),
-            ]
-
-        # ヘッダー書き込みのために先にplを更新する（_write_settings_headerがplを参照するため）
-        pl.update({
-            "experiment_dir": experiment_dir,
-            "video_path": video_path,
-            "fps": fps,
-            "is_360": is_360,
-            "fov": fov_val,
-            "out_w": out_w_val,
-            "out_h": out_h_val,
-            "angles": sel_angles,
-            "use_hloc": use_hloc,
-            "feature_type": feature_type,
-            "matcher_type": matcher_type,
-            "pair_method": pair_method,
-            "retrieval_model": retrieval_model,
-            "num_matched": num_matched,
-            "camera_model": camera_model,
-            "use_gpu": use_gpu,
-            "iterations": iterations,
-            "save_iterations": save_iters or [7000, 30000],
-            "test_iterations": test_iters or [7000, 30000],
-            "eval": use_eval,
-            "resolution": resolution,
-        })
-        log_file = open(log_path, "w")
-        _write_settings_header(log_file, "フレーム抽出")
-        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-
-        st.session_state.pipeline = {
-            **DEFAULT_PIPELINE,
-            **pl,
-            "active": True,
-            "step": "extracting",
-            "step_status": {"extracting": "running"},
-            "proc": proc,
-            "pid": proc.pid,
-            "log_path": log_path,
-            "start_time": time.time(),
-        }
-        save_pipeline_state(st.session_state.pipeline)
-        st.rerun()
 
 # ── 使い方（詳細） ────────────────────────────────────────────────────────────
 with st.expander("📖 使い方（詳細）", expanded=False):
@@ -951,7 +496,7 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 [Step 3] 姿勢推定結果 → 3DGS学習
 ```
 
-全ステップを自動で順番に実行します。途中のステップから再開も可能です。
+設定してキューに追加すると、バックグラウンドデーモンが自動でステップを順番に実行します。
 
 ---
 
@@ -981,14 +526,6 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 | 保存タイミング | カンマ区切りで指定。そのステップのモデルをディスクに保存 | `7000,30000` |
 | 評価タイミング | 1000刻みのボタンで選択。PSNR等のスコアを計算してグラフ化 | 好きなステップを複数選択 |
 | train/test 分割（--eval） | 8枚に1枚をtest用に確保、未学習視点でPSNR評価 | 研究・比較目的に推奨 |
-
----
-
-### 評価タイミング（test_iterations）とは
-- PSNR・SSIM・LPIPS のスコアを計算してログに記録するタイミングです
-- モデルの保存はしないのでストレージを圧迫しません
-- 点を多く選ぶほど学習曲線グラフが滑らかになります
-- 学習ステップ数を超えるボタンは自動で非表示になります
 
 ---
 
