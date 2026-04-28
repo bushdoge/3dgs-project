@@ -96,11 +96,11 @@ def main():
                         features=features_path, matches=matches_path)
 
     # ── [N/N] SfM再構成 ───────────────────────────────────────────────────────
-    # ba_global_max_num_images をデフォルト(500)より大きくしてサブサンプリングを無効化する。
-    # これにより "ba_config.NumImages() >= 2 (0 vs. 2)" エラーを回避できる。
+    # pycolmap 4.x では ba_global_max_num_images が ba_global_frames_freq に改名された。
+    # 大きな値を設定してグローバルBAの頻度を下げ、空の BA 設定によるクラッシュを防ぐ。
     n_images_for_ba = max(n_images * 2, 9999)
-    mapper_options = {"ba_global_max_num_images": n_images_for_ba}
-    print(f"[{total}/{total}] SfM再構成 (ba_global_max_num_images={n_images_for_ba})...", flush=True)
+    mapper_options = {"ba_global_frames_freq": n_images_for_ba}
+    print(f"[{total}/{total}] SfM再構成 (ba_global_frames_freq={n_images_for_ba})...", flush=True)
 
     model = None
     try:
@@ -108,8 +108,8 @@ def main():
             sfm_dir, images, sfm_pairs, features_path, matches_path,
             mapper_options=mapper_options,
         )
-    except ValueError as e:
-        if "ba_config.NumImages() >= 2" in str(e):
+    except (ValueError, RuntimeError) as e:
+        if "ba_config.NumImages() >= 2" in str(e) or "NumImages" in str(e):
             # グローバルBAが失敗した場合、ディスクに保存された部分的な再構成を使用する
             print(f"警告: グローバルBA中にエラーが発生: {e}", file=sys.stderr)
             print("部分的な再構成を使用しようとしています...", flush=True)
