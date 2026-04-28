@@ -365,7 +365,12 @@ with col7:
                                    value=st.session_state.get("pl_save_iters_str", "7000,30000"))
     st.session_state["pl_save_iters_str"] = save_iters_str
 
-st.markdown("**評価タイミング（ボタンで選択 / 解除）**")
+_ti_label_col, _ti_all_col, _ti_none_col = st.columns([6, 1, 1])
+_ti_label_col.markdown("**評価タイミング（ボタンで選択 / 解除）**")
+if _ti_all_col.button("全選択", use_container_width=True, key="pl_test_iter_all"):
+    st.session_state["pl_selected_test_iters"] = set(range(1000, int(iterations) + 1, 1000))
+if _ti_none_col.button("全解除", use_container_width=True, key="pl_test_iter_none"):
+    st.session_state["pl_selected_test_iters"] = set()
 st.caption("クリックで切り替え。青 = 選択中。学習ステップ数を超えるボタンは表示されません。")
 
 def _pl_toggle_test_iter(i):
