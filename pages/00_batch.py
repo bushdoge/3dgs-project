@@ -20,7 +20,9 @@ from queue_helper import (
     load_active_task_file, clear_active_task_file,
 )
 
-BATCH_STATE_FILE = "/workspace/tmp/batch_state.json"
+BATCH_STATE_FILE  = "/workspace/tmp/batch_state.json"
+DAEMON_PID_FILE   = "/workspace/tmp/batch_daemon.pid"
+DAEMON_LOG_FILE   = "/workspace/tmp/batch_daemon.log"
 
 # ─── バッチ実行状態の永続化 ────────────────────────────────────────────────────
 
@@ -408,6 +410,37 @@ def _job_cmdline(job: dict) -> str:
     return "\n\n".join(parts) if parts else "（コマンド生成不可）"
 
 
+def _daemon_pid() -> int | None:
+    """デーモンの PID を返す。起動していなければ None"""
+    try:
+        p = Path(DAEMON_PID_FILE)
+        if p.exists():
+            return int(p.read_text().strip())
+    except Exception:
+        pass
+    return None
+
+def _daemon_alive() -> bool:
+    return _is_pid_alive_local(_daemon_pid())
+
+def _start_daemon():
+    import subprocess as _sp
+    _sp.Popen(
+        [sys.executable, "/workspace/scripts/batch_daemon.py"],
+        stdout=open(DAEMON_LOG_FILE, "a"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,   # ブラウザを閉じても生き続ける
+    )
+
+def _stop_daemon():
+    pid = _daemon_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    Path(DAEMON_PID_FILE).unlink(missing_ok=True)
+
 def _is_pid_alive_local(pid) -> bool:
     if not pid: return False
     try:
@@ -433,8 +466,36 @@ def _log_tail(log_path, n=15):
 st.title("🗂️ バッチキュー")
 st.caption("各ページから追加されたジョブを順番に自動実行します")
 
-# 実行中なら進行チェック
-if st.session_state.bq_active:
+# ── デーモン制御パネル ────────────────────────────────────────────────────────
+_d_alive = _daemon_alive()
+_d_col1, _d_col2, _d_col3 = st.columns([3, 1, 1])
+with _d_col1:
+    if _d_alive:
+        st.success(f"🟢 バックグラウンドデーモン 稼働中　(pid={_daemon_pid()})　— ブラウザを閉じてもキューは実行され続けます")
+    else:
+        st.warning("🔴 デーモン停止中　— ブラウザを開いている間のみキューが進みます")
+with _d_col2:
+    if not _d_alive:
+        if st.button("▶ デーモン起動", use_container_width=True, type="primary"):
+            _start_daemon()
+            time.sleep(1)
+            st.rerun()
+with _d_col3:
+    if _d_alive:
+        if st.button("⏹ デーモン停止", use_container_width=True):
+            _stop_daemon()
+            st.rerun()
+
+# デーモンログをエキスパンダーで表示
+if Path(DAEMON_LOG_FILE).exists():
+    with st.expander("📋 デーモンログ", expanded=False):
+        _dlog = _log_tail(DAEMON_LOG_FILE, n=20)
+        st.code(_dlog, language=None)
+
+st.divider()
+
+# デーモンが動いていればページ側の進行チェックをスキップ
+if st.session_state.bq_active and not _daemon_alive():
     _advance()
 
 _need_rerun = False  # ページ末尾でst.rerun()するかどうかのフラグ
