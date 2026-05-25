@@ -182,10 +182,19 @@ def start_job(job: dict, queue: list):
     if note or not note_path.exists():
         note_path.write_text(note, encoding="utf-8")
 
-    pcfg = {k: v for k, v in cfg.items() if k != "note_md"}
-    pcfg.setdefault("saved_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    (Path(exp) / "pipeline_config.json").write_text(
-        json.dumps(pcfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    pcfg_path = Path(exp) / "pipeline_config.json"
+    existing_pcfg = {}
+    if pcfg_path.exists():
+        try:
+            existing_pcfg = json.loads(pcfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    # 既存データを保持しつつ新ジョブのconfigをマージ（既存キーが消えないようにする）
+    merged_pcfg = dict(existing_pcfg)
+    merged_pcfg.update({k: v for k, v in cfg.items() if k != "note_md"})
+    merged_pcfg["saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pcfg_path.write_text(
+        json.dumps(merged_pcfg, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     if jtype == "pipeline":

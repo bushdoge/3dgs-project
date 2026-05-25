@@ -263,11 +263,10 @@ for col, (label, hloc, feat, matcher) in zip(preset_cols, PRESETS):
 
 col_sfm1, col_sfm2, col_sfm3 = st.columns(3)
 
-FEATURE_OPTIONS = ["superpoint_max", "superpoint_aachen", "disk", "aliked-n16",
-                   "sift", "r2d2", "d2net-ss"]
-MATCHER_OPTIONS = ["superpoint+lightglue", "disk+lightglue", "aliked+lightglue",
-                   "superglue", "superglue-fast", "NN-superpoint", "NN-ratio",
-                   "NN-mutual", "adalam"]
+import sys as _sys_hloc
+if "/workspace" not in _sys_hloc.path:
+    _sys_hloc.path.insert(0, "/workspace")
+from hloc_options import FEATURE_OPTIONS, MATCHER_OPTIONS, FEATURE_DESC, MATCHER_DESC
 
 with col_sfm1:
     use_hloc = st.checkbox("HLocを使用", value=st.session_state.get("pl_use_hloc", False))
@@ -290,8 +289,10 @@ with col_sfm2:
         feat_idx = FEATURE_OPTIONS.index(feat_default) if feat_default in FEATURE_OPTIONS else 0
         feature_type = st.selectbox("特徴点抽出器", FEATURE_OPTIONS, index=feat_idx)
         st.session_state["pl_feature"] = feature_type
+        st.caption(FEATURE_DESC.get(feature_type, ""))
     else:
         st.selectbox("特徴点抽出器", ["SIFT（COLMAP内蔵）"], disabled=True)
+        st.caption("SIFT — 古典的な特徴点アルゴリズム。高速だが深層学習ベースより複雑なシーンでは精度が落ちる。")
         feature_type = "superpoint_max"
 
 with col_sfm3:
@@ -300,8 +301,10 @@ with col_sfm3:
         match_idx = MATCHER_OPTIONS.index(match_default) if match_default in MATCHER_OPTIONS else 0
         matcher_type = st.selectbox("マッチャー", MATCHER_OPTIONS, index=match_idx)
         st.session_state["pl_matcher"] = matcher_type
+        st.caption(MATCHER_DESC.get(matcher_type, ""))
     else:
         st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
+        st.caption("比率テスト付き最近傍マッチング — SIFT と組み合わせる古典的手法。高速・軽量。")
         matcher_type = "superpoint+lightglue"
 
 # ── HLoc ペアリスト生成方式 ────────────────────────────────────────────────────

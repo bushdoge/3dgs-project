@@ -59,14 +59,22 @@ st.markdown(
 # ── 実行中のタスク ─────────────────────────────────────────────────────────────
 st.markdown("### 実行中のタスク")
 
-_pl = st.session_state.get("pipeline", {})
-if not _pl.get("active"):
-    try:
-        _state_file = Path("/workspace/tmp/pipeline_state.json")
-        if _state_file.exists():
-            _pl = json.loads(_state_file.read_text(encoding="utf-8"))
-    except Exception:
-        pass
+try:
+    import sys as _sys
+    if "/workspace" not in _sys.path:
+        _sys.path.insert(0, "/workspace")
+    from pipeline_widget import _load_state as _pw_load_state, _parse_progress as _pw_parse_progress
+    _pl = _pw_load_state()
+except Exception:
+    _pl = st.session_state.get("pipeline", {})
+    if not _pl.get("active"):
+        try:
+            _state_file = Path("/workspace/tmp/pipeline_state.json")
+            if _state_file.exists():
+                _pl = json.loads(_state_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    _pw_parse_progress = None
 
 _pipeline_active = (
     _pl.get("active")
@@ -111,21 +119,27 @@ else:
     _log_path = _pl.get("log_path")
     if _log_path and Path(_log_path).exists():
         _content = Path(_log_path).read_text(errors="replace")
-        _pct, _bar_label = None, ""
 
-        if _step == "training":
-            _total = _pl.get("iterations", 30000)
-            _tm = re.findall(rf'(\d+)/{_total}', _content)
-            if not _tm:
-                _tm = re.findall(r'\[ITER\s+(\d+)\]', _content)
-            if _tm:
-                _cur = int(_tm[-1])
-                _pct = min(_cur / _total, 1.0)
-                _bar_label = f"学習進捗: {_cur:,} / {_total:,} iter ({_pct*100:.0f}%)"
+        # pipeline_widget の _parse_progress があればそれを使う（全ステップ対応）
+        if _pw_parse_progress is not None:
+            _pct, _bar_label = _pw_parse_progress(_pl)
+        else:
+            _pct, _bar_label = None, ""
+            if _step == "training":
+                _total = _pl.get("iterations", 30000)
+                _tm = re.findall(rf'(\d+)/{_total}', _content)
+                if not _tm:
+                    _tm = re.findall(r'\[ITER\s+(\d+)\]', _content)
+                if _tm:
+                    _cur = int(_tm[-1])
+                    _pct = min(_cur / _total, 1.0)
+                    _bar_label = f"学習進捗: {_cur:,} / {_total:,} iter ({_pct*100:.0f}%)"
 
         if _pct is not None:
             st.caption(_bar_label)
             st.progress(_pct)
+        else:
+            st.caption("進捗を解析中...")
 
         # \r を改行として扱い、空行を除いて末尾5行を表示（省略なし）
         _lines = [l for l in _content.replace("\r", "\n").splitlines() if l.strip()]

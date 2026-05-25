@@ -130,11 +130,10 @@ with col_b1:
     )
     st.session_state.sfm_use_hloc = use_hloc
 
-FEATURE_OPTIONS = ["superpoint_max", "superpoint_aachen", "disk", "aliked-n16",
-                   "sift", "r2d2", "d2net-ss"]
-MATCHER_OPTIONS = ["superpoint+lightglue", "disk+lightglue", "aliked+lightglue",
-                   "superglue", "superglue-fast", "NN-superpoint", "NN-ratio",
-                   "NN-mutual", "adalam"]
+import sys as _sys_hloc
+if "/workspace" not in _sys_hloc.path:
+    _sys_hloc.path.insert(0, "/workspace")
+from hloc_options import FEATURE_OPTIONS, MATCHER_OPTIONS, FEATURE_DESC, MATCHER_DESC
 
 with col_b2:
     if use_hloc:
@@ -142,8 +141,10 @@ with col_b2:
             if st.session_state.sfm_feature in FEATURE_OPTIONS else 0
         feature_type = st.selectbox("特徴点抽出器", FEATURE_OPTIONS, index=feat_idx)
         st.session_state.sfm_feature = feature_type
+        st.caption(FEATURE_DESC.get(feature_type, ""))
     else:
         st.selectbox("特徴点抽出器", ["SIFT（COLMAP内蔵）"], disabled=True)
+        st.caption("SIFT — 古典的な特徴点アルゴリズム。高速だが深層学習ベースより複雑なシーンでは精度が落ちる。")
         feature_type = None
 
 with col_b3:
@@ -152,8 +153,10 @@ with col_b3:
             if st.session_state.sfm_matcher in MATCHER_OPTIONS else 0
         matcher_type = st.selectbox("マッチャー", MATCHER_OPTIONS, index=match_idx)
         st.session_state.sfm_matcher = matcher_type
+        st.caption(MATCHER_DESC.get(matcher_type, ""))
     else:
         st.selectbox("マッチャー", ["SIFT最近傍（COLMAP内蔵）"], disabled=True)
+        st.caption("比率テスト付き最近傍マッチング — SIFT と組み合わせる古典的手法。高速・軽量。")
         matcher_type = None
 
 # ── HLoc ペアリスト生成方式 ────────────────────────────────────────────────────

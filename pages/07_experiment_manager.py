@@ -212,6 +212,11 @@ with tab_config:
 
     # ── パイプライン設定（pipeline_config.json） ──────────────────────────────
     _pipeline_cfg_path = selected_exp / "pipeline_config.json"
+    _REQUIRED_KEYS = ["video_path", "fps", "is_360", "use_hloc", "iterations"]
+
+    def _missing_keys(cfg: dict) -> list[str]:
+        return [k for k in _REQUIRED_KEYS if k not in cfg]
+
     if _pipeline_cfg_path.exists():
         st.markdown("#### `pipeline_config.json`　パイプライン設定")
         try:
@@ -286,6 +291,32 @@ with tab_config:
             _recovered_from = _pc.get("_recovered_from")
             if _recovered_from:
                 st.caption(f"⚠️ このファイルはログから復元されました（取得元: {', '.join(_recovered_from)}）")
+
+            # 欠損キーがある場合は警告 + 復元ボタン
+            _missing = _missing_keys(_pc)
+            if _missing:
+                st.warning(f"必須フィールドが欠損しています: `{'`, `'.join(_missing)}`")
+                if st.button("🔍 ログから欠損フィールドを補完", key="recover_pipeline_cfg_partial"):
+                    import sys as _sys_r
+                    _sys_r.path.insert(0, "/workspace/scripts")
+                    from recover_pipeline_config import recover as _recover
+                    _cfg_recovered, _sources = _recover(selected_exp)
+                    # 既存データを保持しつつ、欠損キーのみ補完
+                    _merged = dict(_pc)
+                    for _k, _v in _cfg_recovered.items():
+                        if not _k.startswith("_") and _k not in _merged:
+                            _merged[_k] = _v
+                    _merged["_recovered_from"] = _cfg_recovered.get("_recovered_from", [])
+                    _merged["saved_at"] = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if any(_k in _merged for _k in _missing):
+                        _pipeline_cfg_path.write_text(
+                            __import__("json").dumps(_merged, ensure_ascii=False, indent=2),
+                            encoding="utf-8"
+                        )
+                        st.success(f"補完しました（取得元: {', '.join(_sources) if _sources else 'なし'}）")
+                        st.rerun()
+                    else:
+                        st.warning("ログから欠損フィールドを読み取れませんでした。")
 
         except Exception as _e:
             st.warning(f"pipeline_config.json の解析に失敗しました: {_e}")

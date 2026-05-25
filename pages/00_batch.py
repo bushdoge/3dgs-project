@@ -130,10 +130,19 @@ def _start_job(job: dict):
 
     import json as _json_bq
     from datetime import datetime as _dt_bq
-    pipeline_cfg = {k: v for k, v in cfg.items() if k != "note_md"}
-    pipeline_cfg.setdefault("saved_at", _dt_bq.now().strftime("%Y-%m-%d %H:%M:%S"))
-    (Path(exp) / "pipeline_config.json").write_text(
-        _json_bq.dumps(pipeline_cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    _pcfg_path = Path(exp) / "pipeline_config.json"
+    _existing_pcfg = {}
+    if _pcfg_path.exists():
+        try:
+            _existing_pcfg = _json_bq.loads(_pcfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    # 既存データを保持しつつ新ジョブのconfigをマージ（既存キーが消えないようにする）
+    _merged_pcfg = dict(_existing_pcfg)
+    _merged_pcfg.update({k: v for k, v in cfg.items() if k != "note_md"})
+    _merged_pcfg["saved_at"] = _dt_bq.now().strftime("%Y-%m-%d %H:%M:%S")
+    _pcfg_path.write_text(
+        _json_bq.dumps(_merged_pcfg, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     if jtype == "pipeline":
