@@ -89,6 +89,58 @@ def get_camera_models(sparse_0: Path) -> set:
     return models
 
 
+def apply_masks_to_images(source: Path, masks_dir: Path) -> str:
+    """
+    マスク画像（masks/）を学習画像にアルファチャンネルとして合成し
+    images_masked/ に RGBA PNG として保存する。
+    マスク白(255)=撮影者領域=学習除外、黒(0)=通常領域。
+    返り値: gaussian-splatting に渡す --images サブフォルダ名
+    """
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    # 学習画像ディレクトリを特定
+    img_dir = None
+    for candidate in ["images", "input"]:
+        p = source / candidate
+        if p.exists():
+            img_dir = p
+            break
+    if img_dir is None:
+        print("[masks] 画像フォルダが見つかりません。マスクをスキップします。", flush=True)
+        return "images"
+
+    out_dir = source / "images_masked"
+    out_dir.mkdir(exist_ok=True)
+
+    imgs = sorted(list(img_dir.glob("*.jpg")) + list(img_dir.glob("*.png")))
+    applied = 0
+    for img_path in imgs:
+        mask_path = masks_dir / (img_path.stem + ".png")
+        out_path  = out_dir / (img_path.stem + ".png")
+
+        img = np.array(Image.open(img_path).convert("RGB"))
+
+        if mask_path.exists():
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            if mask is not None:
+                mask = cv2.resize(mask, (img.shape[1], img.shape[0]))
+                # 白=撮影者 → アルファ0（除外）、黒=背景 → アルファ255（学習）
+                alpha = (255 - mask).astype(np.uint8)
+                applied += 1
+            else:
+                alpha = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
+        else:
+            alpha = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
+
+        rgba = np.dstack([img, alpha])
+        Image.fromarray(rgba, "RGBA").save(str(out_path))
+
+    print(f"[masks] {applied}/{len(imgs)} 枚にマスクを適用 → {out_dir}", flush=True)
+    return "images_masked"
+
+
 def run_undistortion(source: Path) -> Path:
     """undistortion を実行し、学習用ソースパス（dense/）を返す"""
     dense = source / "dense"
@@ -174,6 +226,20 @@ def main():
         else:
             print(f"[カメラモデル] {camera_models} → undistortion不要", flush=True)
 
+    # マスクが存在する場合は images_masked/ を作成して使用
+    orig_exp_dir = Path(args.source)
+    masks_dir = orig_exp_dir / "masks"
+    images_subdir = "images"
+    if masks_dir.exists() and any(masks_dir.iterdir()):
+        print(f"[masks] masks/ フォルダを検出。マスク合成を実行します...", flush=True)
+        images_subdir = apply_masks_to_images(source, masks_dir)
+    else:
+        # undistortion後のsourceにも images があるので既定値のまま
+        for candidate in ["images", "input"]:
+            if (source / candidate).exists():
+                images_subdir = candidate
+                break
+
     cmd = [
         sys.executable, "/workspace/scripts/train_custom.py",
         "-s", str(source),
@@ -181,6 +247,7 @@ def main():
         "--iterations", str(args.iterations),
         "--save_iterations", *[str(i) for i in args.save_iterations],
         "--test_iterations", *[str(i) for i in args.test_iterations],
+        "--images", images_subdir,
     ]
     if args.eval:
         cmd.append("--eval")
