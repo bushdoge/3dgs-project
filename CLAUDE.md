@@ -1,7 +1,5 @@
 # CLAUDE.md — 3DGS実験プロジェクト
 
-このファイルはAIアシスタント（Claude）向けのプロジェクト説明・ルール集です。
-
 ---
 
 ## プロジェクト概要
@@ -88,10 +86,7 @@
 
 ---
 
-## Claudeへのルール（必ず守ること）
-
-### コミュニケーション
-- **やり取りはすべて日本語**で行うこと。
+## 開発規約
 
 ### ファイル操作
 - `data/` 配下のファイルは**絶対に削除しない**こと（元動画・元画像が入っている）。
@@ -107,9 +102,6 @@
 - コミットメッセージは**何を修正・追加したか具体的に日本語**で書くこと。
 - **コミット・プッシュはユーザーから明示的に指示があったときのみ行うこと。**
 
-### 実行・処理
-- `train.py` などの**長時間処理やGPUを占有する処理を開始する前は必ず確認**すること。
-
 ### コーディング
 - 各スクリプトの**冒頭にそのファイルが何をするコードなのかをコメントで記載**すること。
 - フォルダ構造は多少深くなっても**わかりやすさを優先**すること。
@@ -119,24 +111,22 @@
 ## よく使うコマンド
 
 ```bash
-# GPUモニター起動
+# Streamlit GUI起動
 streamlit run /workspace/streamlit_app.py
 
 # フレーム抽出（例）
-python scripts/extract_frames.py --input data/movies/scene1.mp4 --output experiments/YYYYMMDD_HHMMSS_scene1/frames/
+python scripts/extract_frames.py --input data/movies/scene1.mp4 --output experiments/YYYYMMDD_scene1/frames/
 
 # COLMAP実行（例）
-python scripts/run_colmap.py --image_path experiments/YYYYMMDD_HHMMSS_scene1/frames/
+python scripts/run_colmap.py --image_path experiments/YYYYMMDD_scene1/frames/
 
-# 3DGS学習（例・実行前に必ず確認）
-python scripts/run_train.py --source experiments/YYYYMMDD_HHMMSS_scene1/
+# 3DGS学習（例）
+python scripts/run_train.py --source experiments/YYYYMMDD_scene1/
 ```
 
 ---
 
-## 注意事項・補足
+## 補足
 
-- ユーザーはGitHub・Docker・Claudeの初心者です。専門用語は丁寧に説明してください。
-- Docker・Git操作に関する質問が多い可能性があります。わかりやすく答えてください。
 - HLocは `/opt/hloc/` にインストール済みです（バージョン 1.5）。
 - COLMAP は 3.9（CUDA対応ビルド）に更新済みです。
