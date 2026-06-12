@@ -23,19 +23,22 @@ SAM2_MODEL_CFG  = "configs/sam2.1/sam2.1_hiera_l.yaml"
 
 def group_frames_by_direction(input_dir: Path) -> dict[str, list[Path]]:
     """
-    ファイル名から方向（y000, y045 等）を抽出してグループ化する。
+    ファイル名から方向（y000_p+0, y045_p+30 等）を抽出してグループ化する。
+    同じyawでもピッチが違えば別視点の動画なので、yawとpitchの組でグループ化する
+    （yawだけで分けると y090_p+0 と y090_p+30 が混ざり、1枚ごとに視点が飛ぶ
+    シーケンスがSAM2に渡ってしまう）。
     360度変換画像（_y\d+_p 形式）でない場合は 'all' として全フレームを1グループにまとめる。
     """
     exts = {".jpg", ".jpeg", ".png"}
     all_frames = sorted([f for f in input_dir.iterdir() if f.suffix.lower() in exts])
 
     groups: dict[str, list[Path]] = {}
-    pattern = re.compile(r'_y(\d+)_p')
+    pattern = re.compile(r'_y(\d+)_p([+-]?\d+)')
 
     for f in all_frames:
         m = pattern.search(f.stem)
         if m:
-            key = f"y{m.group(1)}"
+            key = f"y{m.group(1)}_p{m.group(2)}"
         else:
             key = "all"
         groups.setdefault(key, []).append(f)
@@ -198,7 +201,8 @@ def main():
              "  方向別:     --clicks-json '{\"y000\": [[512,900,1]], \"y090\": [[300,800,1]]}'")
     parser.add_argument("--directions", default=None,
         help="処理する方向をカンマ区切りで指定（省略時は全方向）\n"
-             "  例: --directions y000,y090,y180,y270")
+             "  例: --directions y000_p+0,y090_p+0\n"
+             "  方向名は --list-directions で確認できます")
     parser.add_argument("--list-directions", action="store_true",
         help="方向グループの一覧を表示して終了")
     parser.add_argument("--sor-only",      action="store_true",
