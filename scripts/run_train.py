@@ -45,7 +45,9 @@ def calc_auto_resolution(source: Path) -> int | None:
 
         label = f"{n}枚 × {w}×{h}px = {total_bytes/1e9:.1f}GB / 予算 {budget_bytes/1e9:.1f}GB"
         if total_bytes <= budget_bytes:
-            print(f"[解像度自動判定] {label} → 縮小不要", flush=True)
+            print(f"[解像度自動判定] {label} → 縮小不要"
+                  "（ただし幅1600px超の画像はgaussian-splatting標準動作で1.6Kに縮小されます。"
+                  "フル解像度にしたい場合は --resolution 1 を明示してください）", flush=True)
             return None
 
         r = math.sqrt(total_bytes / budget_bytes)
@@ -89,11 +91,63 @@ def get_camera_models(sparse_0: Path) -> set:
     return models
 
 
-def apply_masks_to_images(source: Path, masks_dir: Path) -> str:
+def build_mask_undistorter(orig_sparse0: Path, undist_sparse0: Path):
+    """歪みありモデルとundistort後モデルから、マスクを再マップする関数を返す。
+    マスクは歪みあり画像（input/）上で生成されるため、undistort後の画像に
+    そのまま重ねると位置がずれる。undistort後画像の各ピクセルを歪みモデルで
+    元画像座標へ射影し、マスクを再サンプリングして整合させる。
+    モデルが読めない場合は None を返す（呼び出し側はリサイズのみにフォールバック）。"""
+    try:
+        import cv2
+        import numpy as np
+        import pycolmap
+        rec_d = pycolmap.Reconstruction(str(orig_sparse0))
+        rec_u = pycolmap.Reconstruction(str(undist_sparse0))
+    except Exception as e:
+        print(f"[masks] カメラモデル読み込み失敗: {e}", flush=True)
+        return None
+
+    # 画像名 → (歪みありカメラID, undistort後カメラID)
+    names_u = {im.name: im.camera_id for im in rec_u.images.values()}
+    name_to_cams = {im.name: (im.camera_id, names_u[im.name])
+                    for im in rec_d.images.values() if im.name in names_u}
+    maps_cache = {}
+
+    def undistort(mask, image_name: str):
+        key = name_to_cams.get(image_name)
+        if key is None:
+            return None
+        if key not in maps_cache:
+            cam_d = rec_d.cameras[key[0]]
+            cam_u = rec_u.cameras[key[1]]
+            K = cam_u.calibration_matrix()
+            fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+            u, v = np.meshgrid(np.arange(cam_u.width), np.arange(cam_u.height))
+            pts = np.stack([(u.ravel() - cx) / fx,
+                            (v.ravel() - cy) / fy,
+                            np.ones(u.size)], axis=1)
+            uv = cam_d.img_from_cam(pts)   # 歪みモデルを適用して元画像ピクセルへ
+            maps_cache[key] = (
+                uv[:, 0].reshape(cam_u.height, cam_u.width).astype(np.float32),
+                uv[:, 1].reshape(cam_u.height, cam_u.width).astype(np.float32),
+                int(cam_d.width), int(cam_d.height),
+            )
+        mx, my, dw, dh = maps_cache[key]
+        if (mask.shape[1], mask.shape[0]) != (dw, dh):
+            mask = cv2.resize(mask, (dw, dh), interpolation=cv2.INTER_NEAREST)
+        return cv2.remap(mask, mx, my, cv2.INTER_NEAREST,
+                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    return undistort
+
+
+def apply_masks_to_images(source: Path, masks_dir: Path, orig_dir: Path = None) -> str:
     """
     マスク画像（masks/）を学習画像にアルファチャンネルとして合成し
     images_masked/ に RGBA PNG として保存する。
     マスク白(255)=撮影者領域=学習除外、黒(0)=通常領域。
+    orig_dir: マスク生成元の実験ディレクトリ。source と異なる（=undistortion済み）
+              場合はマスクをカメラモデルに合わせて再マップする。
     返り値: gaussian-splatting に渡す --images サブフォルダ名
     """
     import cv2
@@ -114,18 +168,38 @@ def apply_masks_to_images(source: Path, masks_dir: Path) -> str:
     out_dir = source / "images_masked"
     out_dir.mkdir(exist_ok=True)
 
+    # undistortionが行われている場合はマスクも同じカメラモデルで再マップする
+    undistorter = None
+    if orig_dir is not None and source.resolve() != Path(orig_dir).resolve():
+        undistorter = build_mask_undistorter(
+            Path(orig_dir) / "sparse" / "0", source / "sparse" / "0"
+        )
+        if undistorter is not None:
+            print("[masks] undistortion検出 → マスクもカメラモデルに合わせて再マップします", flush=True)
+        else:
+            print("[masks] 警告: カメラモデルを読めないため、マスクはリサイズのみで適用します", flush=True)
+
     imgs = sorted(list(img_dir.glob("*.jpg")) + list(img_dir.glob("*.png")))
     applied = 0
     for img_path in imgs:
         mask_path = masks_dir / (img_path.stem + ".png")
-        out_path  = out_dir / (img_path.stem + ".png")
+        # COLMAPのimages.binには元の拡張子込みのファイル名が登録されており、
+        # gaussian-splattingはその名前のままimagesフォルダから画像を開く。
+        # そのためファイル名は変えず、中身だけRGBA対応のPNG形式で保存する
+        # （PILは拡張子ではなくファイル内容で形式を判別するため読み込み可能）。
+        out_path  = out_dir / img_path.name
 
         img = np.array(Image.open(img_path).convert("RGB"))
 
         if mask_path.exists():
             mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
             if mask is not None:
-                mask = cv2.resize(mask, (img.shape[1], img.shape[0]))
+                if undistorter is not None:
+                    remapped = undistorter(mask, img_path.name)
+                    if remapped is not None:
+                        mask = remapped
+                mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
+                                  interpolation=cv2.INTER_NEAREST)
                 # 白=撮影者 → アルファ0（除外）、黒=背景 → アルファ255（学習）
                 alpha = (255 - mask).astype(np.uint8)
                 applied += 1
@@ -135,7 +209,7 @@ def apply_masks_to_images(source: Path, masks_dir: Path) -> str:
             alpha = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
 
         rgba = np.dstack([img, alpha])
-        Image.fromarray(rgba, "RGBA").save(str(out_path))
+        Image.fromarray(rgba, "RGBA").save(str(out_path), format="PNG")
 
     print(f"[masks] {applied}/{len(imgs)} 枚にマスクを適用 → {out_dir}", flush=True)
     return "images_masked"
@@ -232,7 +306,7 @@ def main():
     images_subdir = "images"
     if masks_dir.exists() and any(masks_dir.iterdir()):
         print(f"[masks] masks/ フォルダを検出。マスク合成を実行します...", flush=True)
-        images_subdir = apply_masks_to_images(source, masks_dir)
+        images_subdir = apply_masks_to_images(source, masks_dir, orig_exp_dir)
     else:
         # undistortion後のsourceにも images があるので既定値のまま
         for candidate in ["images", "input"]:

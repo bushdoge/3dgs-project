@@ -186,9 +186,8 @@ resolution_label = st.selectbox(
     index=0,
     help="「自動」にするとVRAMと画像枚数・サイズからOOMにならない倍率を自動計算します。",
 )
+# 1x はそのまま --resolution 1 として渡す（Noneにすると自動判定になり勝手に縮小されうる）
 resolution = resolution_options[resolution_label]
-if resolution == 1:
-    resolution = None  # 1x = 縮小なし
 
 # ── 評価設定 ──────────────────────────────────────────────────────────────────
 use_eval = st.checkbox(

@@ -101,44 +101,72 @@ def run_sam2_on_group(predictor, frames: list[Path], clicks: list[tuple],
 
 # ── SOR ────────────────────────────────────────────────────────────────────────
 
-def apply_sor(exp_dir: Path, nb_neighbors: int = 20, std_ratio: float = 2.0):
-    """points3D.txt に SOR を適用して points3D_clean.txt を出力する"""
-    import open3d as o3d
+def _sor_filter_model(model_dir: Path, nb_neighbors: int, std_ratio: float):
+    """COLMAPモデル（points3D.bin）にSORを適用してその場で書き戻す。
+    各点のk近傍平均距離が「全体平均 + std_ratio×標準偏差」を超える点を外れ値として除去する
+    （open3d の remove_statistical_outlier と同じアルゴリズム）。
+    元のモデルは before_sor/ にバックアップする。"""
+    import shutil
+    import pycolmap
+    from scipy.spatial import cKDTree
 
-    pts_path = exp_dir / "sparse" / "0" / "points3D.txt"
-    out_path = exp_dir / "sparse" / "0" / "points3D_clean.txt"
-
-    if not pts_path.exists():
-        print("[SOR] points3D.txt が見つかりません")
+    rec = pycolmap.Reconstruction(str(model_dir))
+    n = rec.num_points3D()
+    if n <= nb_neighbors + 1:
+        print(f"[SOR] {model_dir}: 点数が少なすぎるためスキップ（{n} 点）", flush=True)
         return
 
-    points, colors, lines_meta = [], [], []
-    with open(pts_path) as f:
-        for line in f:
-            if line.startswith("#") or not line.strip():
-                continue
-            p = line.split()
-            points.append([float(p[1]), float(p[2]), float(p[3])])
-            colors.append([int(p[4]), int(p[5]), int(p[6])])
-            lines_meta.append(line)
+    ids = np.array(list(rec.points3D.keys()))
+    xyz = np.array([rec.points3D[i].xyz for i in ids])
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.array(points))
-    pcd.colors = o3d.utility.Vector3dVector(np.array(colors) / 255.0)
+    tree = cKDTree(xyz)
+    dists, _ = tree.query(xyz, k=nb_neighbors + 1)   # 先頭は自分自身（距離0）
+    mean_d = dists[:, 1:].mean(axis=1)
+    thresh = mean_d.mean() + std_ratio * mean_d.std()
+    outlier_ids = ids[mean_d > thresh]
 
-    print(f"[SOR] 入力: {len(points):,} 点", flush=True)
-    _, inlier_idx = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
-    inlier_set = set(inlier_idx)
-    print(f"[SOR] 残存: {len(inlier_idx):,} 点  除去: {len(points)-len(inlier_idx):,} 点", flush=True)
+    print(f"[SOR] {model_dir}", flush=True)
+    print(f"[SOR]   入力: {n:,} 点 → 残存: {n - len(outlier_ids):,} 点  除去: {len(outlier_ids):,} 点", flush=True)
 
-    with open(out_path, "w") as f:
-        f.write("# 3D point list with one line of data per point:\n")
-        f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
-        for i, line in enumerate(lines_meta):
-            if i in inlier_set:
-                f.write(line)
+    if len(outlier_ids) == 0:
+        return
 
-    print(f"[SOR] 保存: {out_path}", flush=True)
+    # バックアップ（初回のみ）。サブフォルダはCOLMAPリーダーに無視されるので安全
+    backup_dir = model_dir / "before_sor"
+    if not backup_dir.exists():
+        backup_dir.mkdir()
+        for f in ("cameras.bin", "images.bin", "points3D.bin"):
+            if (model_dir / f).exists():
+                shutil.copy2(model_dir / f, backup_dir / f)
+        print(f"[SOR]   バックアップ: {backup_dir}", flush=True)
+
+    for pid in outlier_ids:
+        rec.delete_point3D(int(pid))
+    rec.write(str(model_dir))
+
+    # gaussian-splattingは初回にbin→plyへ変換した points3D.ply をキャッシュとして使うため、
+    # 古いplyが残っているとSOR結果が反映されない。削除して再生成させる
+    stale_ply = model_dir / "points3D.ply"
+    if stale_ply.exists():
+        stale_ply.unlink()
+        print(f"[SOR]   古い points3D.ply を削除（次回学習時に再生成されます）", flush=True)
+
+
+def apply_sor(exp_dir: Path, nb_neighbors: int = 20, std_ratio: float = 2.0):
+    """実験内のCOLMAPモデルにSORを適用する。
+    3DGS学習が実際に点群を読むのは undistortion 後の dense/sparse/0/ なので、
+    sparse/0/ と dense/sparse/0/ の両方（存在するもの）に適用する。"""
+    targets = [
+        exp_dir / "sparse" / "0",
+        exp_dir / "dense" / "sparse" / "0",
+    ]
+    found = False
+    for model_dir in targets:
+        if (model_dir / "points3D.bin").exists():
+            found = True
+            _sor_filter_model(model_dir, nb_neighbors, std_ratio)
+    if not found:
+        print("[SOR] points3D.bin が見つかりません（先に姿勢推定を実行してください）")
 
 
 # ── メイン ─────────────────────────────────────────────────────────────────────
@@ -226,8 +254,8 @@ def main():
     if not args.sam_only:
         try:
             apply_sor(exp_dir, args.sor_neighbors, args.sor_std_ratio)
-        except ImportError:
-            print("[SOR] open3d が未インストールのためスキップ（pip install open3d）")
+        except ImportError as e:
+            print(f"[SOR] 依存ライブラリ不足のためスキップ: {e}")
         except Exception as e:
             print(f"[SOR] エラー: {e}")
 

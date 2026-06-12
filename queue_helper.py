@@ -1,11 +1,48 @@
 # バッチキュー共通ユーティリティ
 # 各ページから import して add_to_queue() でジョブを追加する
+# Streamlitページとバッチデーモンが同じキューファイルを同時に触るため、
+# 変更系の操作は queue_lock()（flock）で排他する
 
 import json
+import fcntl
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 QUEUE_FILE = "/workspace/tmp/batch_queue.json"
+QUEUE_LOCK_FILE = "/workspace/tmp/batch_queue.lock"
+
+
+@contextmanager
+def queue_lock():
+    """キューファイルの read-modify-write を排他するための flock"""
+    Path(QUEUE_LOCK_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with open(QUEUE_LOCK_FILE, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+@contextmanager
+def edit_queue():
+    """ロック下で最新キューを読み込み、ブロック終了時に保存する"""
+    with queue_lock():
+        q = load_queue()
+        yield q
+        save_queue(q)
+
+
+def update_job(job_id: str, **fields):
+    """ロック下で最新キューを読み直し、該当ジョブのフィールドだけ更新する。
+    古いキューのスナップショットで save_queue すると他プロセスの追加分が
+    消えるため、状態更新はこの関数を使うこと。"""
+    with edit_queue() as q:
+        for job in q:
+            if job.get("id") == job_id:
+                job.update(fields)
+                break
 
 JOB_ICONS = {
     "pipeline": "🚀",
@@ -29,7 +66,6 @@ def save_queue(q: list):
     )
 
 def add_to_queue(job_type: str, label: str, exp_name: str, exp_dir: str, config: dict) -> dict:
-    q = load_queue()
     job = {
         "id":           str(uuid.uuid4())[:8],
         "type":         job_type,
@@ -41,8 +77,8 @@ def add_to_queue(job_type: str, label: str, exp_name: str, exp_dir: str, config:
         "log_path":     "",
         "config":       config,
     }
-    q.append(job)
-    save_queue(q)
+    with edit_queue() as q:
+        q.append(job)
     return job
 
 def queue_size() -> int:

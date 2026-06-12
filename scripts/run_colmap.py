@@ -37,6 +37,14 @@ def main():
     use_gpu          = "0" if args.no_gpu else "1"
     db_path          = source / "distorted" / "database.db"
     sparse_distorted = source / "distorted" / "sparse"
+
+    # 前回実行の残骸があると特徴点抽出がスキップされたり古いモデルが混ざるため、
+    # データベースと中間sparseはクリーンな状態から再実行する
+    if db_path.exists():
+        print("既存の database.db を削除して再実行します", flush=True)
+        db_path.unlink()
+    if sparse_distorted.exists():
+        shutil.rmtree(sparse_distorted)
     sparse_distorted.mkdir(parents=True, exist_ok=True)
 
     # ── [1/4] 特徴点抽出 ──────────────────────────────────────────────────────
@@ -77,12 +85,24 @@ def main():
         print(f"ERROR: マッパーが失敗しました (code {ret})", file=sys.stderr)
         sys.exit(ret)
 
+    # ── モデル選択 ────────────────────────────────────────────────────────────
+    # 再構成が複数モデルに分裂した場合（0/ 1/ ...）、最大のモデルを使う
+    model_dirs = sorted(d for d in sparse_distorted.iterdir()
+                        if d.is_dir() and (d / "images.bin").exists())
+    if not model_dirs:
+        print("ERROR: マッパーがモデルを出力しませんでした", file=sys.stderr)
+        sys.exit(1)
+    best_model = max(model_dirs, key=lambda d: (d / "images.bin").stat().st_size)
+    if len(model_dirs) > 1:
+        print(f"警告: 再構成が {len(model_dirs)} モデルに分裂しました。"
+              f"最大のモデル {best_model.name}/ を使用します", flush=True)
+
     # ── [4/4] 画像undistortion ────────────────────────────────────────────────
     print("[COLMAP 4/4] 画像undistortionを開始...", flush=True)
     ret = run_cmd([
         "colmap", "image_undistorter",
         "--image_path",  str(input_dir),
-        "--input_path",  str(sparse_distorted / "0"),
+        "--input_path",  str(best_model),
         "--output_path", str(source),
         "--output_type", "COLMAP",
     ])
