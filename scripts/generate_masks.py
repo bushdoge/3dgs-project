@@ -3,6 +3,8 @@
 # クリック座標をJSON指定 → 各方向の時系列フレームに伝播 → masks/フォルダに保存
 # クリック座標は全方向共通のリスト [[x,y,label],...] または
 # 方向別の辞書 {"y000": [[x,y,label],...], ...} のどちらでも指定できる
+# 方向別の値は {"frame": N, "points": [[x,y,label],...]} 形式も可（フレームNにプロンプトを
+# 与え、そこから前後両方向に伝播する。1枚目に撮影者が写っていないシーン用）
 # （torch は重いので必要になるまで import しない。GUIページからの部分importを軽くするため）
 
 import argparse
@@ -66,8 +68,10 @@ def load_predictor():
 
 
 def run_sam2_on_group(predictor, device: str, frames: list[Path], clicks: list[tuple],
-                       masks_dir: Path, direction: str):
-    """1方向分のフレーム列にSAM2を実行してマスクを保存する"""
+                       masks_dir: Path, direction: str, ann_frame_idx: int = 0):
+    """1方向分のフレーム列にSAM2を実行してマスクを保存する。
+    ann_frame_idx のフレームにクリック点を与え、そこから順方向（→末尾）と
+    逆方向（→先頭）の2回伝播で全フレームをカバーする"""
     import contextlib
     import torch
 
@@ -82,7 +86,9 @@ def run_sam2_on_group(predictor, device: str, frames: list[Path], clicks: list[t
             cv2.imwrite(str(dst), img)
             frame_map[i] = f
 
-        print(f"  [{direction}] {len(frames)} フレームを推論中...", flush=True)
+        ann_frame_idx = max(0, min(ann_frame_idx, len(frames) - 1))
+        print(f"  [{direction}] {len(frames)} フレームを推論中..."
+              f"（プロンプト: フレーム {ann_frame_idx} = {frames[ann_frame_idx].name}）", flush=True)
 
         autocast = (torch.autocast("cuda", dtype=torch.bfloat16)
                     if device == "cuda" else contextlib.nullcontext())
@@ -95,22 +101,27 @@ def run_sam2_on_group(predictor, device: str, frames: list[Path], clicks: list[t
 
             predictor.add_new_points_or_box(
                 inference_state=state,
-                frame_idx=0,
+                frame_idx=ann_frame_idx,
                 obj_id=1,
                 points=pts,
                 labels=labels,
             )
 
-            saved = 0
+            saved_idx = set()
             total = len(frames)
-            for frame_idx, obj_ids, masks in predictor.propagate_in_video(state):
-                orig_path = frame_map[frame_idx]
-                mask_path = masks_dir / (orig_path.stem + ".png")
-                mask = (masks[0][0].cpu().numpy() > 0.0).astype(np.uint8) * 255
-                cv2.imwrite(str(mask_path), mask)
-                saved += 1
-                if saved % 10 == 0 or saved == total:
-                    print(f"PROGRESS {direction} {saved}/{total}", flush=True)
+            passes = [False] if ann_frame_idx == 0 else [False, True]
+            for reverse in passes:
+                for frame_idx, obj_ids, masks in predictor.propagate_in_video(state, reverse=reverse):
+                    if frame_idx in saved_idx:   # プロンプトフレームは両方向で重複する
+                        continue
+                    saved_idx.add(frame_idx)
+                    orig_path = frame_map[frame_idx]
+                    mask_path = masks_dir / (orig_path.stem + ".png")
+                    mask = (masks[0][0].cpu().numpy() > 0.0).astype(np.uint8) * 255
+                    cv2.imwrite(str(mask_path), mask)
+                    if len(saved_idx) % 10 == 0 or len(saved_idx) == total:
+                        print(f"PROGRESS {direction} {len(saved_idx)}/{total}", flush=True)
+            saved = len(saved_idx)
 
     print(f"  [{direction}] 完了: {saved} 枚保存", flush=True)
 
@@ -198,7 +209,10 @@ def main():
         help="クリック座標をJSON文字列で指定\n"
              "  label=1: 撮影者（マスクする）  label=0: 背景\n"
              "  全方向共通: --clicks-json '[[512,900,1]]'\n"
-             "  方向別:     --clicks-json '{\"y000\": [[512,900,1]], \"y090\": [[300,800,1]]}'")
+             "  方向別:     --clicks-json '{\"y000\": [[512,900,1]], \"y090\": [[300,800,1]]}'\n"
+             "  プロンプトフレーム指定（1枚目に撮影者が写っていない場合）:\n"
+             "    --clicks-json '{\"y000\": {\"frame\": 30, \"points\": [[512,900,1]]}}'\n"
+             "    → フレーム30にクリック点を与え、前後両方向に伝播する")
     parser.add_argument("--directions", default=None,
         help="処理する方向をカンマ区切りで指定（省略時は全方向）\n"
              "  例: --directions y000_p+0,y090_p+0\n"
@@ -246,14 +260,27 @@ def main():
             sys.exit(1)
 
         raw = json.loads(args.clicks_json)
+
+        def _parse_entry(v) -> tuple[int, list[tuple]]:
+            """[[x,y,l],...] / {"frame": N, "points": [[x,y,l],...]} を (フレームidx, クリック列) に揃える"""
+            if isinstance(v, dict):
+                return int(v.get("frame", 0)), [(x, y, l) for x, y, l in v.get("points", [])]
+            return 0, [(x, y, l) for x, y, l in v]
+
         if isinstance(raw, dict):
-            # 方向別のクリック座標 {"y000": [[x,y,l],...], ...}
-            clicks_by_dir = {k: [(x, y, l) for x, y, l in v] for k, v in raw.items() if v}
+            # 方向別のクリック座標 {"y000": [[x,y,l],...] または {"frame":N,"points":[...]}, ...}
+            clicks_by_dir = {}
+            for k, v in raw.items():
+                frame_idx, pts = _parse_entry(v)
+                if pts:
+                    clicks_by_dir[k] = (frame_idx, pts)
         else:
             # 全方向共通のクリック座標 [[x,y,l],...]
-            common = [(x, y, l) for x, y, l in raw]
+            common = _parse_entry(raw)
             clicks_by_dir = {k: common for k in groups.keys()}
-        print(f"\nクリック座標: {clicks_by_dir}")
+        print("\nクリック座標:")
+        for k, (frame_idx, pts) in sorted(clicks_by_dir.items()):
+            print(f"  {k}: フレーム {frame_idx} に {pts}")
 
         # 対象方向を絞り込む（--directions指定 > クリック辞書のキー > 全方向）
         if args.directions:
@@ -277,8 +304,9 @@ def main():
         print(f"[SAM2] デバイス: {device}\n")
 
         for direction, frames in to_process.items():
-            run_sam2_on_group(predictor, device, frames,
-                              clicks_by_dir[direction], masks_dir, direction)
+            ann_frame_idx, dir_clicks = clicks_by_dir[direction]
+            run_sam2_on_group(predictor, device, frames, dir_clicks,
+                              masks_dir, direction, ann_frame_idx)
 
         total = sum(len(v) for v in to_process.values())
         print(f"\n[SAM2] 全処理完了: {total} 枚 → {masks_dir}")

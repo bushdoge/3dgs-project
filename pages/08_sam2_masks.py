@@ -39,6 +39,11 @@ if "mask_proc" not in st.session_state:
 if "sam2_clicks" not in st.session_state:
     st.session_state.sam2_clicks = {}
 
+# プロンプトを与えるフレーム番号: {実験名: {方向: フレームidx}}
+# （1枚目に撮影者が写っていない場合、写っているフレームを選んでクリックするため）
+if "sam2_ann_frames" not in st.session_state:
+    st.session_state.sam2_ann_frames = {}
+
 
 def _mask_running() -> bool:
     p = st.session_state.mask_proc
@@ -160,6 +165,7 @@ n_total = sum(len(v) for v in groups.values())
 st.caption(f"方向グループ: {len(groups)}　／　総フレーム数: {n_total:,} 枚")
 
 exp_clicks = st.session_state.sam2_clicks.setdefault(exp_name, {})
+exp_ann    = st.session_state.sam2_ann_frames.setdefault(exp_name, {})
 
 # ── クリック座標の指定 ────────────────────────────────────────────────────────
 st.subheader("撮影者の位置をクリックで指定")
@@ -181,8 +187,23 @@ tabs = st.tabs([f"{d}（{len(groups[d])}枚）" for d in dir_keys])
 
 for tab, direction in zip(tabs, dir_keys):
     with tab:
-        first_frame = groups[direction][0]
-        img = Image.open(first_frame).convert("RGB")
+        frames   = groups[direction]
+        n_frames = len(frames)
+
+        # クリック対象フレームの選択（撮影者が1枚目に写っていないシーン用）
+        ann_idx = 0
+        if n_frames > 1:
+            ann_idx = st.slider(
+                "クリックするフレーム（撮影者がはっきり写っているものを選ぶ）",
+                0, n_frames - 1,
+                key=f"annframe_{exp_name}_{direction}",
+                help="マスクはこのフレームから前後両方向に伝播されます。"
+                     "撮影者が1枚目に写っていない場合は、写っているフレームを選んでください。",
+            )
+        exp_ann[direction] = ann_idx
+
+        ann_frame = frames[ann_idx]
+        img = Image.open(ann_frame).convert("RGB")
         orig_w, orig_h = img.size
         scale = DISP_W / orig_w
         disp = img.resize((DISP_W, int(orig_h * scale)))
@@ -198,7 +219,7 @@ for tab, direction in zip(tabs, dir_keys):
             draw.line([dx - 10, dy, dx + 10, dy], fill=color, width=2)
             draw.line([dx, dy - 10, dx, dy + 10], fill=color, width=2)
 
-        st.caption(f"先頭フレーム: `{first_frame.name}`（{orig_w}×{orig_h}px）— 画像をクリックして点を追加")
+        st.caption(f"フレーム {ann_idx}: `{ann_frame.name}`（{orig_w}×{orig_h}px）— 画像をクリックして点を追加")
 
         if HAS_CLICK_UI:
             res = streamlit_image_coordinates(disp, key=f"imgclick_{exp_name}_{direction}")
@@ -237,6 +258,11 @@ for tab, direction in zip(tabs, dir_keys):
                       disabled=not clicks or len(dir_keys) == 1, use_container_width=True):
             for d in dir_keys:
                 exp_clicks[d] = [list(c) for c in clicks]
+                # フレーム番号もコピー（方向ごとの枚数を超えないように丸める）
+                d_idx = min(ann_idx, len(groups[d]) - 1)
+                exp_ann[d] = d_idx
+                if len(groups[d]) > 1:
+                    st.session_state[f"annframe_{exp_name}_{d}"] = d_idx
             st.rerun()
 
 # ── 実行設定 ──────────────────────────────────────────────────────────────────
@@ -270,7 +296,9 @@ if st.button(
     disabled=_mask_running() or not target_dirs,
     use_container_width=True,
 ):
-    clicks_payload = {d: exp_clicks[d] for d in target_dirs}
+    # {"frame": N, "points": [...]} 形式：フレームNにプロンプトを与え前後両方向に伝播
+    clicks_payload = {d: {"frame": int(exp_ann.get(d, 0)), "points": exp_clicks[d]}
+                      for d in target_dirs}
     cmd = [sys.executable, "/workspace/scripts/generate_masks.py", exp_dir,
            "--clicks-json", json.dumps(clicks_payload),
            "--directions", ",".join(target_dirs),
@@ -339,10 +367,12 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 ### ワークフロー
 
 1. **実験フォルダを選択**（フレーム抽出済みのもの）
-2. 方向タブごとに先頭フレームが表示されるので、**撮影者の上をクリック**（1〜3点）
+2. 方向タブごとにフレームが表示されるので、**撮影者の上をクリック**（1〜3点）
+   - **1枚目に撮影者が写っていない場合**は、スライダーで写っているフレームを選んでからクリック
    - マスクが広がりすぎる場合は「背景」モードで撮影者の外側をクリックして抑制
    - 360度動画は方向ごとに撮影者の写る位置が違うため、**方向ごとに指定**します
-3. **▶ マスク生成を実行** — SAM2が先頭フレームのクリック点を全フレームへ時系列伝播します
+3. **▶ マスク生成を実行** — SAM2が選択フレームのクリック点を前後両方向の全フレームへ時系列伝播します
+   （撮影者が写っていないフレームのマスクは自然に空になります）
 4. プレビューで赤い領域（除外部分）を確認。ずれていたら点を調整して再実行
 5. そのまま **3DGS学習** を実行すると `masks/` が自動検出され、撮影者が学習から除外されます
 

@@ -52,6 +52,7 @@ claude            # 起動して /login → 表示されるURLをブラウザで
 
 # ② Git（ユーザー名・メールはリポジトリ側 .git/config に保存済みなので不要）
 git config --global credential.helper store
+git config --global --add safe.directory /workspace   # これがないと git が dubious ownership エラーになる
 
 # ③ GitHub認証（初回のpush時に聞かれる）
 cd /workspace && git push
@@ -77,6 +78,11 @@ python3 -c "import torch; print('CUDA:', torch.cuda.is_available())"
 #   付いていても False ならホスト側で docker restart（NVMLエラーの典型対処）
 
 # ── 2. Streamlit を起動（tmuxで永続化・ポート8501） ──────
+# ※ コンテナを「作り直した」場合は ~/.streamlit が消えており、初回起動時に
+#   メールアドレス入力プロンプトで止まる（プロセスは生きるがHTTP応答なし）。
+#   先に以下を実行してプロンプトを無効化すること：
+mkdir -p /root/.streamlit && printf '[general]\nemail = ""\n' > /root/.streamlit/credentials.toml
+
 tmux new-session -d -s streamlit "streamlit run /workspace/streamlit_app.py"
 
 #   ログを見る:   tmux attach -t streamlit   （抜けるのは Ctrl+B → D）
@@ -114,3 +120,4 @@ curl -s -o /dev/null -w "Streamlit: HTTP %{http_code}\n" http://localhost:8501
 | Streamlitで突然 `ImportError`（PIL等） | pip更新後にサーバーを再起動していないのが原因。tmuxセッションを作り直す |
 | キューが進まない | キューページでデーモンが🔴停止中になっていないか確認 → ▶起動 |
 | `claude` コマンドがない | Dockerfileの `npm install -g @anthropic-ai/claude-code` が入っているか確認 |
+| Streamlitが起動するがHTTP応答なし | 初回起動のメール入力プロンプトで停止している（作り直し後に発生）。`tmux attach -t streamlit` で確認し、上記の credentials.toml 作成で回避 |
