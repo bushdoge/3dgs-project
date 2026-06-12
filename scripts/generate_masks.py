@@ -1,6 +1,9 @@
 # SAM2を使って実験のinput/フォルダの画像から撮影者マスクを生成するスクリプト
 # 360度動画由来の画像は方向別（y=000, y=045 など）に分けてSAM2を実行する
 # クリック座標をJSON指定 → 各方向の時系列フレームに伝播 → masks/フォルダに保存
+# クリック座標は全方向共通のリスト [[x,y,label],...] または
+# 方向別の辞書 {"y000": [[x,y,label],...], ...} のどちらでも指定できる
+# （torch は重いので必要になるまで import しない。GUIページからの部分importを軽くするため）
 
 import argparse
 import json
@@ -11,7 +14,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 
 SAM2_CHECKPOINT = "/workspace/models/pretrained/sam2/sam2.1_hiera_large.pt"
 SAM2_MODEL_CFG  = "configs/sam2.1/sam2.1_hiera_l.yaml"
@@ -51,15 +53,21 @@ def print_groups(groups: dict[str, list[Path]]):
 # ── SAM2 ───────────────────────────────────────────────────────────────────────
 
 def load_predictor():
+    import torch
     from sam2.build_sam import build_sam2_video_predictor
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        print("警告: CUDAが利用できません。CPUで実行します（非常に時間がかかります）", flush=True)
     predictor = build_sam2_video_predictor(SAM2_MODEL_CFG, SAM2_CHECKPOINT, device=device)
     return predictor, device
 
 
-def run_sam2_on_group(predictor, frames: list[Path], clicks: list[tuple],
+def run_sam2_on_group(predictor, device: str, frames: list[Path], clicks: list[tuple],
                        masks_dir: Path, direction: str):
     """1方向分のフレーム列にSAM2を実行してマスクを保存する"""
+    import contextlib
+    import torch
+
     masks_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -73,7 +81,9 @@ def run_sam2_on_group(predictor, frames: list[Path], clicks: list[tuple],
 
         print(f"  [{direction}] {len(frames)} フレームを推論中...", flush=True)
 
-        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        autocast = (torch.autocast("cuda", dtype=torch.bfloat16)
+                    if device == "cuda" else contextlib.nullcontext())
+        with torch.inference_mode(), autocast:
             state = predictor.init_state(video_path=str(tmpdir))
             predictor.reset_state(state)
 
@@ -89,12 +99,15 @@ def run_sam2_on_group(predictor, frames: list[Path], clicks: list[tuple],
             )
 
             saved = 0
+            total = len(frames)
             for frame_idx, obj_ids, masks in predictor.propagate_in_video(state):
                 orig_path = frame_map[frame_idx]
                 mask_path = masks_dir / (orig_path.stem + ".png")
                 mask = (masks[0][0].cpu().numpy() > 0.0).astype(np.uint8) * 255
                 cv2.imwrite(str(mask_path), mask)
                 saved += 1
+                if saved % 10 == 0 or saved == total:
+                    print(f"PROGRESS {direction} {saved}/{total}", flush=True)
 
     print(f"  [{direction}] 完了: {saved} 枚保存", flush=True)
 
@@ -179,9 +192,10 @@ def main():
     parser.add_argument("exp_dir",
         help="実験ディレクトリ（input/フォルダを含む）")
     parser.add_argument("--clicks-json", default=None,
-        help="クリック座標 [[x,y,label],...] をJSON文字列で指定\n"
+        help="クリック座標をJSON文字列で指定\n"
              "  label=1: 撮影者（マスクする）  label=0: 背景\n"
-             "  例: --clicks-json '[[512,900,1]]'")
+             "  全方向共通: --clicks-json '[[512,900,1]]'\n"
+             "  方向別:     --clicks-json '{\"y000\": [[512,900,1]], \"y090\": [[300,800,1]]}'")
     parser.add_argument("--directions", default=None,
         help="処理する方向をカンマ区切りで指定（省略時は全方向）\n"
              "  例: --directions y000,y090,y180,y270")
@@ -227,25 +241,40 @@ def main():
             print(f"  print(img.size)  # (width, height)\"")
             sys.exit(1)
 
-        raw    = json.loads(args.clicks_json)
-        clicks = [(x, y, l) for x, y, l in raw]
-        print(f"\nクリック座標: {clicks}")
+        raw = json.loads(args.clicks_json)
+        if isinstance(raw, dict):
+            # 方向別のクリック座標 {"y000": [[x,y,l],...], ...}
+            clicks_by_dir = {k: [(x, y, l) for x, y, l in v] for k, v in raw.items() if v}
+        else:
+            # 全方向共通のクリック座標 [[x,y,l],...]
+            common = [(x, y, l) for x, y, l in raw]
+            clicks_by_dir = {k: common for k in groups.keys()}
+        print(f"\nクリック座標: {clicks_by_dir}")
 
-        # 対象方向を絞り込む
-        target_dirs = set(args.directions.split(",")) if args.directions else set(groups.keys())
-        to_process  = {k: v for k, v in sorted(groups.items()) if k in target_dirs}
+        # 対象方向を絞り込む（--directions指定 > クリック辞書のキー > 全方向）
+        if args.directions:
+            target_dirs = set(args.directions.split(","))
+        else:
+            target_dirs = set(clicks_by_dir.keys())
+        to_process = {k: v for k, v in sorted(groups.items()) if k in target_dirs}
 
         if not to_process:
-            print(f"ERROR: 指定した方向が見つかりません: {args.directions}")
+            print(f"ERROR: 指定した方向が見つかりません: {args.directions or list(clicks_by_dir)}")
             print(f"  利用可能: {', '.join(sorted(groups.keys()))}")
             sys.exit(1)
+
+        missing = [d for d in to_process if d not in clicks_by_dir]
+        if missing:
+            print(f"警告: クリック座標が未指定の方向をスキップします: {', '.join(missing)}")
+            to_process = {k: v for k, v in to_process.items() if k in clicks_by_dir}
 
         print(f"\n[SAM2] {len(to_process)} 方向を処理します")
         predictor, device = load_predictor()
         print(f"[SAM2] デバイス: {device}\n")
 
         for direction, frames in to_process.items():
-            run_sam2_on_group(predictor, frames, clicks, masks_dir, direction)
+            run_sam2_on_group(predictor, device, frames,
+                              clicks_by_dir[direction], masks_dir, direction)
 
         total = sum(len(v) for v in to_process.values())
         print(f"\n[SAM2] 全処理完了: {total} 枚 → {masks_dir}")

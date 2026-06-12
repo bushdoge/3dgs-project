@@ -19,6 +19,7 @@ streamlit_app.py
     ├── 01_pipeline.py         # 実験設定 → キューに追加
     ├── 02_frame_extraction.py # フレーム抽出（360度変換オプション付き）
     ├── 03_colmap.py           # カメラ姿勢推定（COLMAP / HLoc）
+    ├── 08_sam2_masks.py       # SAM2 マスク生成（画像クリックで撮影者指定・SOR統合）
     ├── 04_training.py         # 3DGS 学習・リアルタイムログ表示
     ├── 05_results.py          # レンダリング実行・結果確認
     ├── 06_compare.py          # 複数実験の Loss / PSNR 比較

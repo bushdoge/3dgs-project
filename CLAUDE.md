@@ -147,3 +147,5 @@ nohup python3 scripts/batch_daemon.py > /dev/null 2>&1 &
 
 - HLocは `/opt/hloc/` にインストール済みです（バージョン 1.5）。
 - COLMAP は 3.9（CUDA対応ビルド）に更新済みです。
+- SAM2マスクページの画像クリックUIに `streamlit-image-coordinates` を使用しています
+  （pipでコンテナに直接インストール済み。**コンテナ再ビルド時に消えるため Dockerfile への追記が必要**）。
