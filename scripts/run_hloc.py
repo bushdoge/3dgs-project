@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--matcher_type", default="superpoint+lightglue",
                         choices=["superpoint+lightglue", "disk+lightglue",
                                  "aliked+lightglue", "superglue", "superglue-fast",
-                                 "NN-superpoint", "NN-ratio", "NN-mutual"],
+                                 "NN-superpoint", "NN-ratio", "NN-mutual", "adalam"],
                         help="特徴点マッチャー（デフォルト: superpoint+lightglue）")
     parser.add_argument("--pair_method", default="exhaustive",
                         choices=["exhaustive", "retrieval"],
@@ -79,9 +79,13 @@ def main():
         extract_features.main(retrieval_conf, images, feature_path=global_feat_path)
 
         # ── [3/5] ペアリスト生成（retrieval top-K） ──────────────────────────
-        print(f"[3/{total}] ペアリスト生成（retrieval top-{args.num_matched}）...", flush=True)
+        # top-K が画像数以上だと hloc 内部の torch.topk がクラッシュするためクランプする
+        num_matched = min(args.num_matched, max(n_images - 1, 1))
+        if num_matched < args.num_matched:
+            print(f"注意: 画像数が少ないため top-K を {args.num_matched} → {num_matched} に調整しました", flush=True)
+        print(f"[3/{total}] ペアリスト生成（retrieval top-{num_matched}）...", flush=True)
         pairs_from_retrieval.main(
-            global_feat_path, sfm_pairs, num_matched=args.num_matched
+            global_feat_path, sfm_pairs, num_matched=num_matched
         )
     else:
         # ── [2/4] ペアリスト生成（exhaustive） ───────────────────────────────

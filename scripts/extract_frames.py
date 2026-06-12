@@ -32,17 +32,24 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 前回実行の残骸フレームが混入しないように、同パターンの既存ファイルを削除する
+    old_frames = sorted(output_dir.glob("frame_*.jpg"))
+    if old_frames:
+        print(f"既存フレーム {len(old_frames)} 枚を削除して再抽出します", flush=True)
+        for f in old_frames:
+            f.unlink()
+
     total = get_estimated_frames(args.input, args.fps)
     if total > 0:
         print(f"PROGRESS_TOTAL {total}", flush=True)
         print(f"総フレーム数（推定）: {total} 枚", flush=True)
 
+    # -y は出力ファイルより前に置く必要がある（後ろだと trailing option として無視される）
     cmd = [
-        "ffmpeg", "-i", args.input,
+        "ffmpeg", "-y", "-i", args.input,
         "-vf", f"fps={args.fps}",
         "-q:v", "2",
         str(output_dir / "frame_%06d.jpg"),
-        "-y",
     ]
     print(f"実行コマンド: {' '.join(cmd)}", flush=True)
 

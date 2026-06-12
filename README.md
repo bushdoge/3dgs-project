@@ -19,6 +19,7 @@ streamlit_app.py
     ├── 01_pipeline.py         # 実験設定 → キューに追加
     ├── 02_frame_extraction.py # フレーム抽出（360度変換オプション付き）
     ├── 03_colmap.py           # カメラ姿勢推定（COLMAP / HLoc）
+    ├── 08_sam2_masks.py       # SAM2 マスク生成（画像クリックで撮影者指定・SOR統合）
     ├── 04_training.py         # 3DGS 学習・リアルタイムログ表示
     ├── 05_results.py          # レンダリング実行・結果確認
     ├── 06_compare.py          # 複数実験の Loss / PSNR 比較
@@ -69,13 +70,15 @@ COLMAP による SfM を4ステップ（特徴点抽出 → マッチング → 
 HLoc（SuperPoint / DISK / SIFT + LightGlue / SuperGlue など）で SfM を実行します。ペアリスト生成方式を **exhaustive**（全ペア）と **retrieval**（類似画像のみ）から選択できます。出力は COLMAP 互換形式（`sparse/0/`）なので gaussian-splatting にそのまま渡せます。
 
 ### `run_train.py`
-`/opt/gaussian-splatting/train.py` を実験ディレクトリを指定して呼び出すラッパーです。カメラモデルが PINHOLE 以外の場合は自動で undistortion を挟みます。VRAM と画像サイズから縮小解像度を自動計算する機能もあります。
+学習スクリプト（`scripts/train_custom.py`）を実験ディレクトリを指定して呼び出すラッパーです。カメラモデルが PINHOLE 以外の場合は自動で undistortion を挟みます。VRAM と画像サイズから縮小解像度を自動計算する機能もあります。実験フォルダに `masks/` があれば、マスクをアルファチャンネルとして学習画像に合成し（undistortion 済みの場合はマスクもカメラモデルに合わせて再マップ）、撮影者領域を学習から除外します。
 
 ### `run_render.py`
 学習済みモデルから全カメラ視点の画像をレンダリングします。結果は `renders/` に保存されます。
 
 ### `generate_masks.py`（`feature/sam2` ブランチ）
 SAM2（SAM 2.1 Hiera-Large）を使って画像内の撮影者をマスクします。クリック座標を JSON で指定すると、360度動画由来の方向別フレーム群それぞれに対してポイントプロンプトを時系列に伝播させ、`masks/` フォルダに保存します。生成したマスクは学習時に撮影者を除外するために使用します。
+
+あわせて SOR（統計的外れ値除去）で COLMAP 点群をクリーニングできます。`sparse/0/` と `dense/sparse/0/` の `points3D.bin` を直接書き換え（元モデルは `before_sor/` にバックアップ）、次回の学習から除去後の点群が初期値として使われます。`--sor-only` / `--sam-only` で個別実行も可能です。
 
 ### `batch_daemon.py`
 バッチキューを監視してジョブを順次実行するデーモンです。Streamlit を開いていなくても動き続けます。`nohup python3 scripts/batch_daemon.py &` またはキューページの起動ボタンから開始できます。
@@ -84,18 +87,18 @@ SAM2（SAM 2.1 Hiera-Large）を使って画像内の撮影者をマスクしま
 
 ## 実験管理
 
-実験ごとに `experiments/YYYYMMDD_<scene_name>/` フォルダが作成され、以下の構成で出力が保存されます。
+実験ごとに `experiments/YYYYMMDD_<scene_name>_NN/` フォルダが作成され、以下の構成で出力が保存されます。
 
 ```
-experiments/YYYYMMDD_<scene>/
-├── config.yaml       # 実験設定（パイプライン全ステップの引数）
-├── frames/           # 切り出した連番画像
-├── colmap/           # COLMAP / HLoc 出力（sparse/ 等）
-├── input/            # 学習に渡す画像（undistorted）
-├── masks/            # SAM2 マスク画像
-├── output/           # 3DGS 学習結果（point_cloud 等）
-├── renders/          # レンダリング画像
-├── logs/             # 学習ログ（loss_curve.json 等）
+experiments/YYYYMMDD_<scene>_NN/
+├── pipeline_config.json  # 実験設定（パイプライン全ステップの引数）
+├── input/            # 切り出した連番画像（姿勢推定への入力）
+├── sparse/0/         # COLMAP / HLoc の姿勢推定結果（COLMAP互換モデル）
+├── dense/            # undistortion 後の画像 + モデル（PINHOLE以外のとき生成）
+├── hloc_outputs/     # HLoc の中間生成物（features.h5 等）
+├── masks/            # SAM2 マスク画像（任意）
+├── output/           # 3DGS 学習結果（point_cloud / train_log.txt 等）
+├── extract_log.txt / colmap_log.txt  # 各ステップのログ
 └── note.md           # 自由メモ
 ```
 

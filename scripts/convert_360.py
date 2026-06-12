@@ -3,6 +3,7 @@
 
 import argparse
 import math
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -81,13 +82,16 @@ def process_image(img_path, out_dir, fov, out_w, out_h, angles):
 
 
 def extract_frames(video_path, frames_dir, fps):
+    # 前回実行の残骸フレームが混入しないように、一時フォルダを空にしてから抽出する
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
     frames_dir.mkdir(parents=True, exist_ok=True)
+    # -y は出力ファイルより前に置く必要がある（後ろだと trailing option として無視される）
     cmd = [
-        "ffmpeg", "-i", str(video_path),
+        "ffmpeg", "-y", "-i", str(video_path),
         "-vf", f"fps={fps}",
         "-q:v", "2",
         str(frames_dir / "frame_%06d.jpg"),
-        "-y",
     ]
     result = subprocess.run(cmd, text=True, stderr=subprocess.PIPE)
     if result.returncode != 0:
@@ -122,6 +126,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 入力が動画の場合はフレーム抽出してから変換
+    tmp_frames = None
     if input_path.is_file() and input_path.suffix.lower() in (".mp4", ".mov", ".avi", ".mkv"):
         print(f"動画からフレームを抽出中（{args.fps} fps）...", flush=True)
         tmp_frames = Path("/workspace/tmp") / f"360frames_{input_path.stem}"
@@ -140,6 +145,10 @@ def main():
         n = process_image(img_path, out_dir, args.fov, args.width, args.height, angles)
         total += n
         print(f"  [{i}/{len(images)}] 変換中...", flush=True)
+
+    # 一時フレームを削除してストレージを節約する
+    if tmp_frames is not None:
+        shutil.rmtree(tmp_frames, ignore_errors=True)
 
     print(f"変換完了: {total} 枚 → {out_dir}", flush=True)
 

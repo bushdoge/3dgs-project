@@ -16,8 +16,12 @@ import json as _json
 sys.path.insert(0, "/workspace")
 from queue_helper import (
     QUEUE_FILE, JOB_ICONS,
-    load_queue, save_queue, pending_size,
+    load_queue, pending_size,
+    edit_queue, update_job,
     load_active_task_file, clear_active_task_file,
+)
+from job_commands import (
+    build_extract_cmd, build_colmap_cmd, build_train_cmd, build_render_cmd,
 )
 
 BATCH_STATE_FILE  = "/workspace/tmp/batch_state.json"
@@ -114,7 +118,7 @@ def _launch(job: dict, step: str, cmd: list, log_path: str):
     job["status"]       = "running"
     job["current_step"] = step
     job["log_path"]     = log_path
-    save_queue(st.session_state.bq_queue)
+    update_job(job["id"], status="running", current_step=step, log_path=log_path)
     _save_batch_state()
 
 def _start_job(job: dict):
@@ -146,85 +150,20 @@ def _start_job(job: dict):
     )
 
     if jtype == "pipeline":
-        _do_extract(job)
-
+        cmd, log = build_extract_cmd(cfg, exp)
+        _launch(job, "extracting", cmd, log)
     elif jtype == "extract":
-        log = str(Path(exp) / "extract_log.txt")
-        input_dir = str(Path(exp) / "input")
-        os.makedirs(input_dir, exist_ok=True)
-        if cfg.get("is_360"):
-            cmd = [sys.executable, "/workspace/scripts/convert_360.py",
-                   "--input", cfg["video_path"], "--output", input_dir,
-                   "--fov", str(cfg.get("fov", 90)),
-                   "--width", str(cfg.get("out_w", 1024)),
-                   "--height", str(cfg.get("out_h", 1024)),
-                   "--fps", str(cfg.get("fps", 1.0)),
-                   "--angles", *[f"{y},{p}" for y, p in cfg.get("angles", [(0,0),(90,0),(180,0),(270,0)])]]
-        else:
-            cmd = [sys.executable, "/workspace/scripts/extract_frames.py",
-                   "--input", cfg["video_path"], "--output", input_dir,
-                   "--fps", str(cfg.get("fps", 2.0))]
+        cmd, log = build_extract_cmd(cfg, exp)
         _launch(job, "extract", cmd, log)
-
     elif jtype == "colmap":
-        log = str(Path(exp) / "colmap_log.txt")
-        if cfg.get("use_hloc"):
-            cmd = [sys.executable, "/workspace/scripts/run_hloc.py",
-                   "--source_path", exp,
-                   "--feature_type", cfg.get("feature_type", "superpoint_aachen"),
-                   "--matcher_type", cfg.get("matcher_type", "superpoint+lightglue"),
-                   "--pair_method", cfg.get("pair_method", "exhaustive"),
-                   "--retrieval_model", cfg.get("retrieval_model", "netvlad"),
-                   "--num_matched", str(cfg.get("num_matched", 20))]
-        else:
-            cmd = [sys.executable, "/workspace/scripts/run_colmap.py",
-                   "--source_path", exp,
-                   "--camera_model", cfg.get("camera_model", "OPENCV")]
+        cmd, log = build_colmap_cmd(cfg, exp)
         _launch(job, "colmap", cmd, log)
-
     elif jtype == "train":
-        model_path = cfg.get("model_path", str(Path(exp) / "output"))
-        os.makedirs(model_path, exist_ok=True)
-        log = str(Path(model_path) / "train_log.txt")
-        cmd = [sys.executable, "/workspace/scripts/run_train.py",
-               "--source", exp, "--model_path", model_path,
-               "--iterations", str(cfg.get("iterations", 30000)),
-               "--save_iterations", *[str(i) for i in cfg.get("save_iterations", [7000, 30000])],
-               "--test_iterations", *[str(i) for i in cfg.get("test_iterations", [1000, 7000, 15000, 30000])]]
-        if cfg.get("eval"): cmd.append("--eval")
-        if cfg.get("resolution"): cmd += ["--resolution", str(cfg["resolution"])]
+        cmd, log = build_train_cmd(cfg, exp)
         _launch(job, "train", cmd, log)
-
     elif jtype == "render":
-        model_path = cfg.get("model_path", str(Path(exp) / "output"))
-        log = str(Path(model_path) / "render_log.txt")
-        cmd = [sys.executable, "/workspace/scripts/run_render.py",
-               "-m", model_path, "-s", exp,
-               "--iteration", str(cfg.get("iteration", -1))]
-        if cfg.get("skip_train"): cmd.append("--skip_train")
-        if cfg.get("skip_test"):  cmd.append("--skip_test")
-        if cfg.get("white_background"): cmd.append("--white_background")
+        cmd, log = build_render_cmd(cfg, exp)
         _launch(job, "render", cmd, log)
-
-def _do_extract(job: dict):
-    cfg = job["config"]
-    exp = job["exp_dir"]
-    log = str(Path(exp) / "extract_log.txt")
-    input_dir = str(Path(exp) / "input")
-    os.makedirs(input_dir, exist_ok=True)
-    if cfg.get("is_360"):
-        cmd = [sys.executable, "/workspace/scripts/convert_360.py",
-               "--input", cfg["video_path"], "--output", input_dir,
-               "--fov", str(cfg.get("fov", 90)),
-               "--width", str(cfg.get("out_w", 1024)),
-               "--height", str(cfg.get("out_h", 1024)),
-               "--fps", str(cfg.get("fps", 1.0)),
-               "--angles", *[f"{y},{p}" for y, p in cfg.get("angles", [(0,0),(90,0),(180,0),(270,0)])]]
-    else:
-        cmd = [sys.executable, "/workspace/scripts/extract_frames.py",
-               "--input", cfg["video_path"], "--output", input_dir,
-               "--fps", str(cfg.get("fps", 2.0))]
-    _launch(job, "extracting", cmd, log)
 
 # ─── ステップ進行 ──────────────────────────────────────────────────────────────
 
@@ -245,62 +184,28 @@ def _advance():
 
     if not ok:
         job["status"] = "failed"
-        save_queue(st.session_state.bq_queue)
+        update_job(job["id"], status="failed")
         _run_next()
         return
 
     if jtype == "pipeline":
         if step == "extracting":
-            _start_job({**job, "type": "colmap"})
-            job["current_step"] = "colmap"
-            # colmapとして起動し直す
-            _start_colmap_for_pipeline(job)
+            cmd, log = build_colmap_cmd(job["config"], job["exp_dir"])
+            _launch(job, "colmap", cmd, log)
             return
         elif step == "colmap":
-            _start_train_for_pipeline(job)
+            cmd, log = build_train_cmd(job["config"], job["exp_dir"])
+            _launch(job, "training", cmd, log)
             return
         elif step == "training":
             job["status"] = "done"
-            save_queue(st.session_state.bq_queue)
+            update_job(job["id"], status="done")
             _run_next()
             return
     else:
         job["status"] = "done"
-        save_queue(st.session_state.bq_queue)
+        update_job(job["id"], status="done")
         _run_next()
-
-def _start_colmap_for_pipeline(job: dict):
-    cfg = job["config"]
-    exp = job["exp_dir"]
-    log = str(Path(exp) / "colmap_log.txt")
-    if cfg.get("use_hloc"):
-        cmd = [sys.executable, "/workspace/scripts/run_hloc.py",
-               "--source_path", exp,
-               "--feature_type", cfg.get("feature_type", "superpoint_aachen"),
-               "--matcher_type", cfg.get("matcher_type", "superpoint+lightglue"),
-               "--pair_method", cfg.get("pair_method", "exhaustive"),
-               "--retrieval_model", cfg.get("retrieval_model", "netvlad"),
-               "--num_matched", str(cfg.get("num_matched", 20))]
-    else:
-        cmd = [sys.executable, "/workspace/scripts/run_colmap.py",
-               "--source_path", exp,
-               "--camera_model", cfg.get("camera_model", "OPENCV")]
-    _launch(job, "colmap", cmd, log)
-
-def _start_train_for_pipeline(job: dict):
-    cfg = job["config"]
-    exp = job["exp_dir"]
-    model_path = str(Path(exp) / "output")
-    os.makedirs(model_path, exist_ok=True)
-    log = str(Path(model_path) / "train_log.txt")
-    cmd = [sys.executable, "/workspace/scripts/run_train.py",
-           "--source", exp, "--model_path", model_path,
-           "--iterations", str(cfg.get("iterations", 30000)),
-           "--save_iterations", *[str(i) for i in cfg.get("save_iterations", [7000, 30000])],
-           "--test_iterations", *[str(i) for i in cfg.get("test_iterations", [1000, 7000, 15000, 30000])]]
-    if cfg.get("eval"): cmd.append("--eval")
-    if cfg.get("resolution"): cmd += ["--resolution", str(cfg["resolution"])]
-    _launch(job, "training", cmd, log)
 
 def _run_next():
     # ファイルから最新キューを読み、次のpendingを開始
@@ -312,11 +217,11 @@ def _run_next():
                 Path("/workspace/experiments") / job["exp_name"]
             )
             os.makedirs(job["exp_dir"], exist_ok=True)
+            update_job(job["id"], exp_dir=job["exp_dir"])
             _start_job(job)
             return
     st.session_state.bq_active = False
     st.session_state.bq_step   = ""
-    save_queue(q)
     _clear_batch_state()
 
 def _stop_batch():
@@ -329,11 +234,12 @@ def _stop_batch():
     st.session_state.bq_active = False
     st.session_state.bq_proc   = None
     st.session_state.bq_step   = ""
-    for job in st.session_state.bq_queue:
-        if job["status"] == "running":
-            job["status"] = "pending"
-            job["current_step"] = ""
-    save_queue(st.session_state.bq_queue)
+    with edit_queue() as q:
+        for job in q:
+            if job["status"] == "running":
+                job["status"] = "pending"
+                job["current_step"] = ""
+    st.session_state.bq_queue = load_queue()
     _clear_batch_state()
 
 # ─── コマンドライン生成 ───────────────────────────────────────────────────────
@@ -651,18 +557,26 @@ else:
         c1.markdown(f"{icon} **{job['exp_name']}**　<small style='color:#4a90b8'>{label}</small>",
                     unsafe_allow_html=True)
         if c2.button("↑", key=f"up_{job['id']}", disabled=(i == 0), use_container_width=True):
-            idx      = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
-            prev_idx = next(k for k in range(idx-1, -1, -1) if queue[k]["status"] == "pending")
-            queue[idx], queue[prev_idx] = queue[prev_idx], queue[idx]
-            save_queue(queue); st.rerun()
+            with edit_queue() as q:
+                idx      = next((k for k, j in enumerate(q) if j["id"] == job["id"]), None)
+                prev_idx = next((k for k in range((idx or 0)-1, -1, -1)
+                                 if q[k]["status"] == "pending"), None)
+                if idx is not None and prev_idx is not None:
+                    q[idx], q[prev_idx] = q[prev_idx], q[idx]
+            st.rerun()
         if c3.button("↓", key=f"dn_{job['id']}", disabled=(i == len(pending)-1), use_container_width=True):
-            idx      = next(k for k, j in enumerate(queue) if j["id"] == job["id"])
-            next_idx = next(k for k in range(idx+1, len(queue)) if queue[k]["status"] == "pending")
-            queue[idx], queue[next_idx] = queue[next_idx], queue[idx]
-            save_queue(queue); st.rerun()
+            with edit_queue() as q:
+                idx      = next((k for k, j in enumerate(q) if j["id"] == job["id"]), None)
+                next_idx = next((k for k in range((idx or 0)+1, len(q))
+                                 if q[k]["status"] == "pending"), None)
+                if idx is not None and next_idx is not None:
+                    q[idx], q[next_idx] = q[next_idx], q[idx]
+            st.rerun()
         if c4.button("✕", key=f"del_{job['id']}", use_container_width=True):
-            st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
-            save_queue(st.session_state.bq_queue); st.rerun()
+            with edit_queue() as q:
+                q[:] = [j for j in q if j["id"] != job["id"]]
+            st.session_state.bq_queue = load_queue()
+            st.rerun()
 
         # 設定コマンドライン（デフォルト非表示）
         with st.expander("設定を表示", expanded=False):
@@ -681,12 +595,131 @@ if done_f:
         dc1.markdown(f"{s_icon} {j_icon} **{job['exp_name']}**　<small style='color:#4a90b8'>{job['status']}</small>",
                      unsafe_allow_html=True)
         if dc2.button("🗑", key=f"rm_{job['id']}", use_container_width=True):
-            st.session_state.bq_queue = [j for j in queue if j["id"] != job["id"]]
-            save_queue(st.session_state.bq_queue); st.rerun()
+            with edit_queue() as q:
+                q[:] = [j for j in q if j["id"] != job["id"]]
+            st.session_state.bq_queue = load_queue()
+            st.rerun()
 
     if st.button("🗑 完了・失敗をまとめて削除", use_container_width=False):
-        st.session_state.bq_queue = [j for j in queue if j["status"] == "pending"]
-        save_queue(st.session_state.bq_queue); st.rerun()
+        # 実行中（running）ジョブは消さずに残す（消すとデーモンがキューを停止してしまう）
+        with edit_queue() as q:
+            q[:] = [j for j in q if j["status"] in ("pending", "running")]
+        st.session_state.bq_queue = load_queue()
+        st.rerun()
+
+# ════════════════════════════════════════════════════════════════════════════
+#  使い方ガイド
+# ════════════════════════════════════════════════════════════════════════════
+st.divider()
+with st.expander("📖 使い方：360度動画から3DGSを作る流れ（撮影者マスクあり）", expanded=False):
+    st.markdown("""
+## 全体の流れ
+
+```
+[Step 1] フレーム抽出（🎞️ フレーム抽出ページ）        … 数分・自動
+[Step 2] SAM2マスク生成（🎭 SAM2マスクページ）         … クリック数十秒＋実行数分 ★唯一の手作業
+[Step 3] 姿勢推定（📷 姿勢推定ページ → キュー）        … 数十分〜・自動
+[Step 4] 3DGS学習（🧠 3DGS学習ページ → キュー）        … 30〜60分・自動（マスク自動適用）
+[Step 5] 結果確認（🖼️ 結果確認ページ）
+```
+
+> **なぜ🚀パイプライン一括実行を使わないの？**
+> パイプラインジョブは抽出→姿勢推定→学習までノンストップで進むため、途中にマスク作成
+> （人間のクリック）を挟む隙がありません。学習開始時点で `masks/` が間に合っていないと
+> マスクなし（または未完成のマスク）で学習が始まってしまいます。
+> 撮影者を消したい場合は下記の分割手順が確実です。
+
+---
+
+## Step 1: フレーム抽出のみ実行
+
+**🎞️ フレーム抽出ページ**で：
+
+1. 動画を選択（`data/360movies/` に置いたもの。例: `Ylab_room_v2_mid.mp4`）
+2. 「360度動画」をON → FPS・FOV・出力解像度・切り出し方向を設定
+   - 例: FPS=1.0、FOV=90°、水平4方向（0/90/180/270°）→ 2分の動画なら約480枚
+   - 45°刻み8方向にすると枚数が2倍になり姿勢推定時間も伸びるので、まず4方向がおすすめ
+3. 実行 → `experiments/YYYYMMDD_<シーン名>_NN/input/` に
+   `frame_000001_y000_p+0.jpg` のような連番画像が生成される
+   - ファイル名は「時刻 + 方向」。`frame_000123_y090_p+0` = 123秒目・右90°・水平
+
+---
+
+## Step 2: SAM2マスク生成（手作業はここだけ）
+
+**🎭 SAM2マスクページ**で：
+
+1. Step 1 の実験フォルダを選択 → 方向ごとのタブが並ぶ（`y000_p+0`, `y090_p+0`, ...）
+2. 各タブに**その方向の1枚目のフレーム**が表示されるので、
+   **撮影者が写っているタブだけ**開いて体の上を🔴で1〜3点クリック
+   - 撮影者はカメラと一緒に動くので、写る方向・位置は毎フレームほぼ固定です
+   - 360度の重複により2〜3方向に写るのが普通 → 写っている方向は全部クリック
+   - 写っていない方向は何もしなくてOK（自動でスキップされます）
+   - マスクが体からはみ出すときは🔵背景点で抑制
+3. ▶実行 → SAM2が1枚目で教えた人を全フレームへ自動追跡（GPUで1枚 0.1〜0.3秒）
+4. **プレビューを必ず確認**：各方向の先頭・中間・末尾に赤いマスクが正しく
+   人に乗っているか。ずれていたら点を修正して再実行（マスクは上書きされます）
+
+→ `masks/` フォルダに白黒マスクPNGが生成される（白=撮影者=学習から除外）
+
+---
+
+## Step 3: 姿勢推定をキューに追加
+
+**📷 姿勢推定ページ**で実験フォルダを選び、HLocを設定してキューに追加：
+
+- 推奨: `superpoint_aachen` + `superpoint+lightglue`
+- 画像が300枚を超える場合は **Retrieval（netvlad, top-20）** を推奨
+  （Exhaustiveは480枚で約11.5万ペアになり非常に時間がかかります）
+
+キューに入れたらこのページのデーモンが自動実行します。**ブラウザを閉じてもOK**。
+
+→ `sparse/0/`（姿勢+点群）が生成される。SIMPLE_RADIAL等の場合は学習時に
+  自動でundistortionされ `dense/` が作られます
+
+任意: 姿勢推定が終わったら🎭ページの「SORのみ実行」で点群のノイズ除去もできます。
+
+---
+
+## Step 4: 3DGS学習をキューに追加
+
+**🧠 3DGS学習ページ**で実験フォルダを選び、キューに追加（30,000 iter が標準）。
+
+学習開始時に `masks/` が**自動検出**されます。ログでここを確認：
+
+```
+[masks] masks/ フォルダを検出。マスク合成を実行します...
+[masks] undistortion検出 → マスクもカメラモデルに合わせて再マップします
+[masks] 480/480 枚にマスクを適用 → .../images_masked
+```
+
+マスク領域は損失計算から除外され、他視点の観測だけでその空間が再構成される
+→ 結果として撮影者が消えます。
+
+---
+
+## Step 5: 結果確認・やり直し
+
+**🖼️ 結果確認ページ**でレンダリングし、撮影者がいた場所が消えているか確認。
+
+- **足やスティックが残った** → Step 2 に戻って点を追加しマスク再生成 →
+  **学習だけ再実行**でOK（`images_masked/` は学習起動のたびに作り直されるため、
+  抽出・姿勢推定のやり直しは不要）
+- **マスク以外の品質が悪い** → 姿勢推定の設定（特徴点・ペア方式）や
+  FPS・方向数を見直して Step 1 / Step 3 から
+
+---
+
+## 補足
+
+| 項目 | 内容 |
+|---|---|
+| 所要時間の目安 | 抽出 数分 / マスク 数分 / 姿勢推定 数十分〜 / 学習30k 30〜60分（A6000） |
+| 手作業 | Step 2 のクリックとプレビュー確認のみ。残りは全部キュー+デーモン任せ |
+| マスク不要なシーン | Step 2 を丸ごとスキップすれば通常のパイプライン一括実行でOK |
+| デーモン | このページ上部で起動・停止。稼働中はブラウザを閉じてもキューが進みます |
+| 同じ撮り方の2本目以降 | 撮影者はほぼ同じ画素位置に写るため、同じクリック座標が使い回せます |
+""")
 
 # ページ末尾で自動更新（途中でst.rerun()しないことで全コンテンツを描画してから更新）
 if _need_rerun:

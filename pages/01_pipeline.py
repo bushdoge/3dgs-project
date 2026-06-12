@@ -57,6 +57,20 @@ def _start_daemon():
         start_new_session=True,
     )
 
+@st.cache_data(ttl=600)
+def _video_duration_sec(path: str) -> float:
+    """ffprobeで動画の長さ（秒）を取得する。失敗時は0"""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=duration", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        return float(out)
+    except Exception:
+        return 0.0
+
 # ── セッション状態初期化 ──────────────────────────────────────────────────────
 
 if "pl_selected_test_iters" not in st.session_state:
@@ -342,10 +356,12 @@ if use_hloc:
                 value=st.session_state.get("pl_num_matched", 20), step=5,
             )
             st.session_state["pl_num_matched"] = num_matched
-            n_images_est = len(list(Path("/workspace/experiments").rglob("input/*.jpg")))
-            pairs_est = n_images_est * num_matched if n_images_est else 0
-            if pairs_est:
-                st.caption(f"推定ペア数: 約 {pairs_est:,}")
+            # 入力動画の長さ×FPS×方向数から、これから抽出されるフレーム数を見積もる
+            _dur = _video_duration_sec(video_path) if video_path and os.path.exists(video_path) else 0.0
+            if _dur > 0:
+                n_images_est = max(1, int(_dur * fps)) * (len(sel_angles) if is_360 else 1)
+                st.caption(f"推定: 約 {n_images_est:,} 枚 → 約 {n_images_est * num_matched:,} ペア"
+                           f"（全ペアなら {n_images_est * (n_images_est - 1) // 2:,}）")
         else:
             retrieval_model = "netvlad"
             num_matched = 20
@@ -433,9 +449,8 @@ _res_label = st.selectbox(
     index=list(_res_options.keys()).index(_res_label_default),
     help="「自動」にするとVRAMと画像枚数・サイズからOOMにならない倍率を自動計算します。",
 )
+# 1x はそのまま --resolution 1 として渡す（Noneにすると自動判定になり勝手に縮小されうる）
 resolution = _res_options[_res_label]
-if resolution == 1:
-    resolution = None
 st.session_state["pl_resolution"] = resolution
 
 st.divider()

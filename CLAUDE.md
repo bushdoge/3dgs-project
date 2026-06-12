@@ -37,23 +37,34 @@
 │   └── images/             # 画像群（シーン名サブフォルダ必須）
 │       └── <scene_name>/   # 例: images/garden/001.jpg
 ├── experiments/            # 実験結果
-│   └── YYYYMMDD_HHMMSS_<scene_name>/   # 日時+シーン名
-│       ├── config.yaml     # 実験設定
-│       ├── frames/         # 切り出した連番画像
-│       ├── colmap/         # COLMAP出力（sparse/ dense/ 等）
+│   └── YYYYMMDD_<scene_name>_NN/   # 日付+シーン名+連番（例: 20260429_Ylab_room_v2_mid_01）
+│       ├── pipeline_config.json    # 実験設定（パイプライン/バッチ実行時に自動保存）
+│       ├── input/          # 切り出した連番画像（COLMAP/HLocへの入力）
+│       ├── sparse/0/       # 姿勢推定結果（COLMAP互換モデル）
+│       ├── dense/          # undistortion後の画像+モデル（PINHOLE以外のとき生成）
+│       ├── hloc_outputs/   # HLocの中間生成物（features.h5等）
+│       ├── masks/          # SAM2撮影者マスク（任意。あると学習時に自動合成）
 │       ├── output/         # 3DGS学習結果（point_cloud等）
-│       ├── renders/        # レンダリング結果
-│       ├── logs/           # 学習ログ
-│       ├── note.md         # 自由メモ（気づき・失敗原因など）
-│       └── source_video -> /workspace/data/{360movies,movies}/<scene_name>.mp4  # シンボリックリンク
+│       ├── extract_log.txt / colmap_log.txt   # 各ステップのログ
+│       └── note.md         # 自由メモ（気づき・失敗原因など）
 ├── models/                 # 事前学習済みモデル置き場
-│   └── pretrained/         # 外部からDLしたモデルファイル
+│   └── pretrained/         # 外部からDLしたモデルファイル（SAM2チェックポイント等）
+├── queue_helper.py         # バッチキュー共通ユーティリティ（flockで排他）
+├── job_commands.py         # バッチジョブのコマンド構築（デーモン/GUI共通）
+├── pipeline_widget.py      # 進捗ウィジェット共通コンポーネント
+├── hloc_options.py         # HLoc特徴点・マッチャー選択肢の定義
+├── pages/                  # Streamlitページ（00_batch〜91_monitor）
 ├── scripts/                # 各種処理スクリプト
 │   ├── extract_frames.py       # 動画→連番画像の切り出し
 │   ├── convert_360.py          # 360度動画のピンホール変換
 │   ├── run_colmap.py           # COLMAP実行ラッパー
-│   ├── run_train.py            # 3DGS学習実行ラッパー
-│   └── pipeline.py             # パイプライン統合スクリプト（GUI対応）
+│   ├── run_hloc.py             # HLoc実行ラッパー（COLMAP互換出力）
+│   ├── run_train.py            # 3DGS学習実行ラッパー（マスク合成・自動undistortion対応）
+│   ├── train_custom.py         # train.py改変版（SSIM/LPIPS評価ログ追加）
+│   ├── run_render.py           # レンダリング実行ラッパー
+│   ├── generate_masks.py       # SAM2撮影者マスク生成 + SOR点群クリーニング
+│   ├── batch_daemon.py         # バッチキュー自動実行デーモン
+│   └── recover_pipeline_config.py  # pipeline_config.json復元ツール
 ├── tmp/                    # 一時作業ファイル置き場（gitignore推奨）
 └── /opt/gaussian-splatting/    # 公式ソース（読み取り専用・直接変更禁止）
 ```
@@ -115,13 +126,19 @@
 streamlit run /workspace/streamlit_app.py
 
 # フレーム抽出（例）
-python scripts/extract_frames.py --input data/movies/scene1.mp4 --output experiments/YYYYMMDD_scene1/frames/
+python scripts/extract_frames.py --input data/movies/scene1.mp4 --output experiments/YYYYMMDD_scene1_01/input/
 
 # COLMAP実行（例）
-python scripts/run_colmap.py --image_path experiments/YYYYMMDD_scene1/frames/
+python scripts/run_colmap.py --source_path experiments/YYYYMMDD_scene1_01/
+
+# HLoc実行（例）
+python scripts/run_hloc.py --source_path experiments/YYYYMMDD_scene1_01/
 
 # 3DGS学習（例）
-python scripts/run_train.py --source experiments/YYYYMMDD_scene1/
+python scripts/run_train.py --source experiments/YYYYMMDD_scene1_01/ --model_path experiments/YYYYMMDD_scene1_01/output/
+
+# バッチデーモン起動（ブラウザなしでキューを自動実行）
+nohup python3 scripts/batch_daemon.py > /dev/null 2>&1 &
 ```
 
 ---
@@ -130,3 +147,5 @@ python scripts/run_train.py --source experiments/YYYYMMDD_scene1/
 
 - HLocは `/opt/hloc/` にインストール済みです（バージョン 1.5）。
 - COLMAP は 3.9（CUDA対応ビルド）に更新済みです。
+- コンテナ再構築・再起動時の手順（Dockerfile追記リスト・ログイン永続化・起動チェックリスト）は
+  **`/workspace/SETUP.md`** にまとめてあります。再起動後に何をすべきか迷ったらまずこれを読むこと。
