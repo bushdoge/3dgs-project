@@ -25,38 +25,46 @@ RUN pip install sam2==1.1.0 lpips streamlit-image-coordinates
 
 ---
 
-## 2. Claude / GitHub に毎回ログインし直さないために
+## 2. Claude / GitHub のログインについて
 
-**原因**：`/workspace` はNFSマウントなので永続ですが、`/root`（ホームディレクトリ）は
-コンテナ内部にあるため、**コンテナを作り直すたびに消えます**。ここに入っているのが：
+**仕組み**：`/workspace` はNFSマウントなので永続だが、`/root`（ホームディレクトリ）は
+コンテナ内部にあるため、**コンテナを「作り直す」と消える**。ここに入っているのは：
 
 - `/root/.claude/` と `/root/.claude.json` — Claude Codeのログイン情報・設定
 - `/root/.gitconfig` と `/root/.git-credentials` — GitHubの認証トークン
-- `/root/.cache/torch/` — HLocが使うSuperPoint/NetVLAD等の学習済み重み（毎回再DLしてた原因）
+- `/root/.cache/torch/` — HLocが使うSuperPoint/NetVLAD等の学習済み重み
 
-**対策**：`docker run` に `-v` を1つ足して `/root` を丸ごとホスト側に永続化する：
+**重要な区別**：
+
+| 操作 | /root | ログインし直し |
+|---|---|---|
+| `docker restart`（再起動） | **消えない** | **不要** |
+| `docker rm` → `docker run`、イメージ再ビルド（作り直し） | 消える | 必要（下記手順） |
+
+頻繁に作り直すわけではないので、**作り直したときだけ以下を再実行する**運用とする
+（共有マシンに認証トークンを永続保存しない、というセキュリティ上の利点もある）。
+
+### 作り直した後のログイン手順
 
 ```bash
-# ホスト側で一度だけ作成（chmod 700 で自分以外アクセス不可にする）
-mkdir -p ~/3dgs_container_root
-chmod 700 ~/3dgs_container_root
-ls -ld ~/3dgs_container_root   # → drwx------ になっていればOK
+# ① Claude Code
+claude            # 起動して /login → 表示されるURLをブラウザで開いて認証
 
-# docker run に追加（--gpus all 等の既存オプションはそのまま）
-docker run ... \
-  -v ~/3dgs_container_root:/root \
-  ...
+# ② Git（ユーザー名・メールはリポジトリ側 .git/config に保存済みなので不要）
+git config --global credential.helper store
+
+# ③ GitHub認証（初回のpush時に聞かれる）
+cd /workspace && git push
+#   Username: bushdoge
+#   Password: Personal Access Token（GitHubの Settings > Developer settings で発行）
+#   → ②の設定により2回目以降は聞かれない
 ```
 
-これで **Claude・GitHubのログインは初回の1回だけ**になり、HLocのモデルキャッシュも
-持ち越されます。docker-compose の場合は `volumes:` に `- ~/3dgs_container_root:/root` を追加。
+> PATは Fine-grained PAT で「このリポジトリのみ・Contents Read/Write・有効期限つき」に
+> 絞って発行しておくと、漏れたときの被害を限定できる。
 
-> **共有マシンでの注意**：このディレクトリには `/root/.git-credentials`（GitHubの
-> Personal Access Tokenが**平文**で入る）と Claude のログイントークンが保存される。
-> `chmod 700` はディレクトリ自体への他ユーザーのアクセスを遮断するためのもの。
-> 中のファイルはコンテナ（root権限）が作るため通常 root所有・600 になり二重に守られるが、
-> ホストで sudo を持つ人には読める。気になる場合は GitHub 側で Fine-grained PAT を使い、
-> 対象をこのリポジトリのみ・有効期限つきに絞っておくと漏れたときの被害を限定できる。
+> HLocのモデル重み（`/root/.cache/torch/`）も消えるが、これは初回実行時に
+> 自動で再ダウンロードされるので何もしなくてよい（初回の姿勢推定だけ数分遅くなる）。
 
 ---
 
@@ -81,10 +89,11 @@ tmux new-session -d -s streamlit "streamlit run /workspace/streamlit_app.py"
 nohup python3 /workspace/scripts/batch_daemon.py > /dev/null 2>&1 &
 # 状態確認: キューページ上部の「🟢稼働中 / 🔴停止中」表示
 
-# ── 4. ログイン（/root を永続化していない場合のみ） ─────
-claude          # 起動後に /login → ブラウザ認証
-git push        # 初回にユーザー名 + Personal Access Token を入力
-                # （credential.helper=store 設定済みなので2回目以降は不要）
+# ── 4. ログイン（コンテナを「作り直した」場合のみ。docker restart なら不要） ─
+# 詳細な手順は上の「2. Claude / GitHub のログインについて」を参照
+claude                                        # 起動後に /login → ブラウザ認証
+git config --global credential.helper store   # トークン保存を有効化
+git push                                      # 初回にユーザー名 + PAT を入力（以降は不要）
 ```
 
 ### 動作確認（全部そろったかの最終チェック）
