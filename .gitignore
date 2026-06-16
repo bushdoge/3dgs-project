@@ -40,6 +40,7 @@ data/
 
 # 一時作業ファイル
 tmp/
+temp.md
 
 # 実験結果の大きなファイル
 experiments/outputs/

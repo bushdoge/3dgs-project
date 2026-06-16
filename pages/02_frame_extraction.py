@@ -228,7 +228,8 @@ if is_360 and sel_angles:
         f'python /workspace/scripts/convert_360.py \\\n'
         f'  --input "{input_path}" --output "{output_path}" \\\n'
         f'  --fov {fov} --width {out_w} --height {out_h} \\\n'
-        f'  --fps {fps} --angles {angles_str}'
+        f'  --fps {fps} --angles {angles_str} \\\n'
+        f'  --keep-equirect "{Path(experiment_dir) / "equirect"}"'
     )
 else:
     cmd_str = (f'python /workspace/scripts/extract_frames.py '
@@ -257,6 +258,7 @@ if st.button("▶ 抽出を開始", type="primary", disabled=not can_run):
                 "--height", str(out_h),
                 "--fps", str(fps),
                 "--angles", *[f"{y},{p}" for y, p in sel_angles],
+                "--keep-equirect", str(Path(experiment_dir) / "equirect"),
             ]
         else:
             cmd = [

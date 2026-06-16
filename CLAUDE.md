@@ -40,10 +40,12 @@
 │   └── YYYYMMDD_<scene_name>_NN/   # 日付+シーン名+連番（例: 20260429_Ylab_room_v2_mid_01）
 │       ├── pipeline_config.json    # 実験設定（パイプライン/バッチ実行時に自動保存）
 │       ├── input/          # 切り出した連番画像（COLMAP/HLocへの入力）
+│       ├── equirect/       # 等距円筒フレーム+meta.json（360度のみ。等距円筒マスク生成用）
 │       ├── sparse/0/       # 姿勢推定結果（COLMAP互換モデル）
 │       ├── dense/          # undistortion後の画像+モデル（PINHOLE以外のとき生成）
 │       ├── hloc_outputs/   # HLocの中間生成物（features.h5等）
 │       ├── masks/          # SAM2撮影者マスク（任意。あると学習時に自動合成）
+│       ├── masks_equirect/ # 等距円筒モードのSAM2出力（masks/への投影元）
 │       ├── output/         # 3DGS学習結果（point_cloud等）
 │       ├── extract_log.txt / colmap_log.txt   # 各ステップのログ
 │       └── note.md         # 自由メモ（気づき・失敗原因など）

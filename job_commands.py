@@ -20,6 +20,9 @@ def build_extract_cmd(cfg: dict, exp: str) -> tuple[list, str]:
                "--height", str(cfg.get("out_h", 1024)),
                "--fps", str(cfg.get("fps", 1.0)),
                "--angles", *[f"{y},{p}" for y, p in cfg.get("angles", [(0, 0), (90, 0), (180, 0), (270, 0)])]]
+        # 等距円筒フレームも保存（SAM2マスクを等距円筒で作って全方向に投影するため）
+        if cfg.get("keep_equirect", True):
+            cmd += ["--keep-equirect", str(Path(exp) / "equirect")]
     else:
         cmd = [sys.executable, "/workspace/scripts/extract_frames.py",
                "--input", cfg["video_path"], "--output", input_dir,
