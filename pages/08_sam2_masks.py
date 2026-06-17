@@ -155,14 +155,31 @@ if not ready_dirs:
 exp_dir  = st.selectbox("実験フォルダ（input/ を含むもの）", ready_dirs,
                         format_func=lambda x: Path(x).name)
 exp_name = Path(exp_dir).name
-groups   = group_frames_by_direction(Path(exp_dir) / "input")
+input_groups = group_frames_by_direction(Path(exp_dir) / "input")
 
-if not groups:
+if not input_groups:
     st.warning("input/ に画像が見つかりません。")
     st.stop()
 
-n_total = sum(len(v) for v in groups.values())
-st.caption(f"方向グループ: {len(groups)}　／　総フレーム数: {n_total:,} 枚")
+n_total = sum(len(v) for v in input_groups.values())
+st.caption(f"方向グループ: {len(input_groups)}　／　総フレーム数: {n_total:,} 枚")
+
+# ── モード選択（等距円筒フレームがある実験のみ）─────────────────────────────
+eq_dir    = Path(exp_dir) / "equirect"
+eq_frames = sorted(eq_dir.glob("*.jpg")) if (eq_dir / "meta.json").exists() else []
+
+equirect_mode = False
+if eq_frames:
+    mode = st.radio(
+        "マスク生成モード", ["🌐 等距円筒（推奨）", "📐 方向別"], horizontal=True,
+        help="等距円筒: 360度画像上で1回クリック → SAM2を1系統実行 → 全ピンホール方向にマスクを投影。"
+             "撮影者が複数方向に写っていても指定は1回で済みます。　"
+             "方向別: ピンホール各方向で個別にクリック・実行（従来方式）",
+    )
+    equirect_mode = mode.startswith("🌐")
+
+# クリックUIの対象: 等距円筒モードでは equirect/ の1系統、方向別では input/ の方向グループ
+groups = {"equirect": eq_frames} if equirect_mode else input_groups
 
 exp_clicks = st.session_state.sam2_clicks.setdefault(exp_name, {})
 exp_ann    = st.session_state.sam2_ann_frames.setdefault(exp_name, {})
@@ -269,11 +286,17 @@ for tab, direction in zip(tabs, dir_keys):
 st.divider()
 st.subheader("実行")
 
-dirs_with_clicks = [d for d in dir_keys if exp_clicks.get(d)]
-sel_dirs = st.multiselect(
-    "マスク生成する方向（クリック座標がある方向のみ実行されます）",
-    dir_keys, default=dirs_with_clicks,
-)
+if equirect_mode:
+    sel_dirs = ["equirect"]
+    mask_dilate = st.number_input(
+        "マスク膨張（px）", 0, 50, 7,
+        help="投影前に等距円筒マスクを膨張させて境界の取りこぼしを防ぎます（消しすぎ側に倒す）")
+else:
+    dirs_with_clicks = [d for d in dir_keys if exp_clicks.get(d)]
+    sel_dirs = st.multiselect(
+        "マスク生成する方向（クリック座標がある方向のみ実行されます）",
+        dir_keys, default=dirs_with_clicks,
+    )
 run_sor = st.checkbox("マスク生成後にSOR（点群クリーニング）も実行する", value=False,
                       help="sparse/0 と dense/sparse/0 の points3D.bin から外れ値を除去します。"
                            "元のモデルは before_sor/ にバックアップされます。")
@@ -283,7 +306,13 @@ with st.expander("SOR 詳細設定", expanded=False):
                                     help="小さいほど積極的に除去します")
 
 target_dirs = [d for d in sel_dirs if exp_clicks.get(d)]
-n_frames_run = sum(len(groups[d]) for d in target_dirs)
+if equirect_mode:
+    # SAM2は等距円筒1系統、出力は全ピンホールフレーム分
+    n_frames_run = n_total if target_dirs else 0
+    run_label = f"▶ マスク生成を実行（等距円筒 {len(eq_frames)} フレーム → 全方向 {n_frames_run:,} 枚に投影）"
+else:
+    n_frames_run = sum(len(groups[d]) for d in target_dirs)
+    run_label = f"▶ マスク生成を実行（{len(target_dirs)} 方向 / {n_frames_run:,} フレーム）"
 
 masks_dir = Path(exp_dir) / "masks"
 if masks_dir.exists() and any(masks_dir.iterdir()):
@@ -291,7 +320,7 @@ if masks_dir.exists() and any(masks_dir.iterdir()):
             "同名フレームのマスクは上書きされます。")
 
 if st.button(
-    f"▶ マスク生成を実行（{len(target_dirs)} 方向 / {n_frames_run:,} フレーム）",
+    run_label,
     type="primary",
     disabled=_mask_running() or not target_dirs,
     use_container_width=True,
@@ -301,9 +330,12 @@ if st.button(
                       for d in target_dirs}
     cmd = [sys.executable, "/workspace/scripts/generate_masks.py", exp_dir,
            "--clicks-json", json.dumps(clicks_payload),
-           "--directions", ",".join(target_dirs),
            "--sor-neighbors", str(int(sor_neighbors)),
            "--sor-std-ratio", str(float(sor_std))]
+    if equirect_mode:
+        cmd += ["--equirect", "--mask-dilate", str(int(mask_dilate))]
+    else:
+        cmd += ["--directions", ",".join(target_dirs)]
     if not run_sor:
         cmd.append("--sam-only")
 
@@ -347,8 +379,8 @@ if masks_dir.exists() and any(masks_dir.glob("*.png")):
     st.subheader("生成済みマスクのプレビュー")
     st.caption("🔴 赤い領域 = マスク（学習から除外される部分）。各方向の先頭・中間・末尾フレームを表示します。")
 
-    for direction in dir_keys:
-        frames = groups[direction]
+    for direction in sorted(input_groups.keys()):
+        frames = input_groups[direction]
         samples = []
         for f in [frames[0], frames[len(frames) // 2], frames[-1]]:
             mp = masks_dir / (f.stem + ".png")
@@ -367,14 +399,20 @@ with st.expander("📖 使い方（詳細）", expanded=False):
 ### ワークフロー
 
 1. **実験フォルダを選択**（フレーム抽出済みのもの）
-2. 方向タブごとにフレームが表示されるので、**撮影者の上をクリック**（1〜3点）
+2. **モードを選択**（`equirect/` がある実験のみ表示）
+   - **🌐 等距円筒（推奨）**: 360度画像上で撮影者を1回クリックするだけ。SAM2を等距円筒フレーム列に
+     1系統実行し、出来たマスクを画像変換と同じremapで**全ピンホール方向に投影**します。
+     左右端の継ぎ目はクリック点が中央に来るよう自動でrollして回避します。
+   - **📐 方向別（従来方式）**: ピンホール各方向で個別にクリック・実行。`equirect/` がない実験や
+     通常動画・画像群はこちらになります。
+3. フレームが表示されるので、**撮影者の上をクリック**（1〜3点）
    - **1枚目に撮影者が写っていない場合**は、スライダーで写っているフレームを選んでからクリック
    - マスクが広がりすぎる場合は「背景」モードで撮影者の外側をクリックして抑制
-   - 360度動画は方向ごとに撮影者の写る位置が違うため、**方向ごとに指定**します
-3. **▶ マスク生成を実行** — SAM2が選択フレームのクリック点を前後両方向の全フレームへ時系列伝播します
+   - 方向別モードでは撮影者の写る位置が方向ごとに違うため、**方向ごとに指定**します
+4. **▶ マスク生成を実行** — SAM2が選択フレームのクリック点を前後両方向の全フレームへ時系列伝播します
    （撮影者が写っていないフレームのマスクは自然に空になります）
-4. プレビューで赤い領域（除外部分）を確認。ずれていたら点を調整して再実行
-5. そのまま **3DGS学習** を実行すると `masks/` が自動検出され、撮影者が学習から除外されます
+5. プレビューで赤い領域（除外部分）を確認。ずれていたら点を調整して再実行
+6. そのまま **3DGS学習** を実行すると `masks/` が自動検出され、撮影者が学習から除外されます
 
 ### SOR（点群クリーニング）
 COLMAP点群の外れ値（ノイズ点）を統計的に除去します。`sparse/0/` と `dense/sparse/0/` の

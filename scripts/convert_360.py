@@ -2,6 +2,7 @@
 # 1枚の360度画像から前・左・右・後・上・下の6方向または指定方向にクロップして出力する
 
 import argparse
+import json
 import math
 import shutil
 import subprocess
@@ -12,14 +13,16 @@ import cv2
 import numpy as np
 
 
-def equirect_to_perspective(img, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
-    """等距円筒画像から指定方向のピンホール画像を切り出す。
+def build_equirect_maps(h, w, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
+    """等距円筒（h×w）→ピンホール視点のremapテーブル（map_x, map_y）を作る。
+    同じ視点のフレームを大量に変換するときはこれを1回作って使い回す
+    （generate_masks.py のマスク投影でも同じテーブルを使い、画像とマスクの
+    ピクセル対応を厳密に保つ）。
 
     fov_deg  : 水平視野角（度）
     yaw_deg  : 水平回転（度、右が正）
     pitch_deg: 垂直回転（度、上が正）
     """
-    h, w = img.shape[:2]
     fov = math.radians(fov_deg)
     yaw = math.radians(yaw_deg)
     pitch = math.radians(pitch_deg)
@@ -60,18 +63,34 @@ def equirect_to_perspective(img, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
     map_y = (0.5 - lat / math.pi) * h
     map_x = map_x.astype(np.float32)
     map_y = map_y.astype(np.float32)
+    return map_x, map_y
 
+
+def equirect_to_perspective(img, fov_deg, yaw_deg, pitch_deg, out_w, out_h):
+    """等距円筒画像から指定方向のピンホール画像を切り出す"""
+    h, w = img.shape[:2]
+    map_x, map_y = build_equirect_maps(h, w, fov_deg, yaw_deg, pitch_deg, out_w, out_h)
     return cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
 
 
-def process_image(img_path, out_dir, fov, out_w, out_h, angles):
-    """angles: list of (yaw_deg, pitch_deg) tuples"""
+def process_image(img_path, out_dir, fov, out_w, out_h, angles,
+                  eq_dir=None, eq_width=2048):
+    """angles: list of (yaw_deg, pitch_deg) tuples
+    eq_dir を指定すると、変換元の等距円筒フレームも保存する
+    （SAM2マスク生成用。eq_width に縮小してストレージを節約する）"""
     img = cv2.imread(str(img_path))
     if img is None:
         print(f"  読み込みエラー: {img_path}", flush=True)
         return 0
 
     stem = img_path.stem
+    if eq_dir is not None:
+        eq = img
+        if eq_width and img.shape[1] > eq_width:
+            eq_h = round(img.shape[0] * eq_width / img.shape[1])
+            eq = cv2.resize(img, (eq_width, eq_h), interpolation=cv2.INTER_AREA)
+        cv2.imwrite(str(eq_dir / f"{stem}.jpg"), eq, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
     count = 0
     for yaw, pitch in angles:
         out = equirect_to_perspective(img, fov, yaw, pitch, out_w, out_h)
@@ -114,6 +133,11 @@ def main():
     parser.add_argument("--angles", nargs="+",
                         default=["0,0", "90,0", "180,0", "270,0"],
                         help="変換する角度ペア yaw,pitch（例: 0,0 45,30 90,-30）")
+    parser.add_argument("--keep-equirect", default=None, metavar="DIR",
+                        help="等距円筒フレームの保存先フォルダ（SAM2マスク生成用）。"
+                             "変換パラメータも DIR/meta.json に記録する")
+    parser.add_argument("--equirect-width", type=int, default=2048,
+                        help="--keep-equirect 保存時の幅（デフォルト: 2048。0で原寸）")
     args = parser.parse_args()
 
     angles = []
@@ -124,6 +148,15 @@ def main():
     input_path = Path(args.input)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    eq_dir = None
+    if args.keep_equirect:
+        eq_dir = Path(args.keep_equirect)
+        # 前回実行の残骸が混入しないように既存フレームを削除する
+        if eq_dir.exists():
+            for f in eq_dir.glob("*.jpg"):
+                f.unlink()
+        eq_dir.mkdir(parents=True, exist_ok=True)
 
     # 入力が動画の場合はフレーム抽出してから変換
     tmp_frames = None
@@ -142,13 +175,21 @@ def main():
 
     total = 0
     for i, img_path in enumerate(images, 1):
-        n = process_image(img_path, out_dir, args.fov, args.width, args.height, angles)
+        n = process_image(img_path, out_dir, args.fov, args.width, args.height, angles,
+                          eq_dir=eq_dir, eq_width=args.equirect_width)
         total += n
         print(f"  [{i}/{len(images)}] 変換中...", flush=True)
 
     # 一時フレームを削除してストレージを節約する
     if tmp_frames is not None:
         shutil.rmtree(tmp_frames, ignore_errors=True)
+
+    if eq_dir is not None:
+        # マスク投影（generate_masks.py --equirect）が同じremapを再現するための変換パラメータ
+        meta = {"fov": args.fov, "width": args.width, "height": args.height,
+                "angles": angles}
+        (eq_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+        print(f"等距円筒フレーム保存: {len(images)} 枚 → {eq_dir}", flush=True)
 
     print(f"変換完了: {total} 枚 → {out_dir}", flush=True)
 

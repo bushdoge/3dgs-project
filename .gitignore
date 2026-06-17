@@ -41,6 +41,12 @@ data/
 # 一時作業ファイル
 tmp/
 
+# ローカル専用メモ（GitHubには上げない作業メモ置き場）
+memo/
+
+# プロジェクト指示（Claude Code用・ルートに残すが非公開）
+CLAUDE.md
+
 # 実験結果の大きなファイル
 experiments/outputs/
 experiments/renders/
