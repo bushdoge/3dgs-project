@@ -149,5 +149,6 @@ nohup python3 scripts/batch_daemon.py > /dev/null 2>&1 &
 
 - HLocは `/opt/hloc/` にインストール済みです（バージョン 1.5）。
 - COLMAP は 3.9（CUDA対応ビルド）に更新済みです。
-- コンテナ再構築・再起動時の手順（Dockerfile追記リスト・ログイン永続化・起動チェックリスト）は
-  **`/workspace/SETUP.md`** にまとめてあります。再起動後に何をすべきか迷ったらまずこれを読むこと。
+- コンテナ再構築・再起動時の手順（ログイン永続化・起動チェックリスト）は
+  **`/workspace/memo/SETUP.md`** にまとめてあります（ローカル専用メモ。gitignore対象）。
+  再起動後に何をすべきか迷ったらまずこれを読むこと。

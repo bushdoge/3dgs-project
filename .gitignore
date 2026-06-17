@@ -40,7 +40,9 @@ data/
 
 # 一時作業ファイル
 tmp/
-temp.md
+
+# ローカル専用メモ（GitHubには上げない作業メモ置き場）
+memo/
 
 # 実験結果の大きなファイル
 experiments/outputs/
