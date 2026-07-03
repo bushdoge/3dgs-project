@@ -49,12 +49,58 @@ def save_todos(todos):
 
 # ── ヘッダー ──────────────────────────────────────────────────────────────────
 st.markdown(
-    '<div style="font-size:2.2rem;font-weight:700;letter-spacing:0.15em;color:#00e5ff;'
-    'text-shadow:0 0 12px #00e5ff88;margin-bottom:0;">🔬 3DGS LAB</div>'
-    '<div style="font-size:0.75rem;color:#4a90b8;letter-spacing:0.2em;margin-top:0.2rem;'
-    'margin-bottom:1.5rem;">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>',
+    '<div style="font-size:1.9rem;font-weight:700;letter-spacing:0.12em;color:#2dd4bf;'
+    'margin-bottom:0;">🔬 3DGS LAB</div>'
+    '<div style="font-size:0.72rem;color:#7a93a8;letter-spacing:0.22em;margin-top:0.15rem;'
+    'margin-bottom:1.1rem;">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>',
     unsafe_allow_html=True,
 )
+
+# ── ステータスカード ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=10, show_spinner=False)
+def _gpu_status() -> str:
+    """GPU名を返す。見えない場合は要対処のサインなので明示する"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total",
+             "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=3)
+        if r.returncode == 0 and r.stdout.strip():
+            name, used, total = [x.strip() for x in r.stdout.strip().split(",")]
+            return f"{name.replace('NVIDIA ', '')}｜{used} / {total}"
+    except Exception:
+        pass
+    return "未接続（要 docker restart）"
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _disk_free() -> str:
+    import shutil
+    du = shutil.disk_usage("/workspace")
+    return f"{du.free / 1e12:.1f} TB 空き"
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _exp_count() -> int:
+    p = Path("/workspace/experiments")
+    return sum(1 for d in p.iterdir() if d.is_dir()) if p.exists() else 0
+
+_gpu = _gpu_status()
+c1, c2, c3 = st.columns(3)
+c1.metric("GPU", _gpu.split("｜")[0], _gpu.split("｜")[1] if "｜" in _gpu else None,
+          delta_color="off")
+c2.metric("実験数", f"{_exp_count()} 件")
+c3.metric("ストレージ (/workspace)", _disk_free())
+if _gpu.startswith("未接続"):
+    st.error("GPUが見えていません。学習・COLMAP(GPU)は失敗します。"
+             "ホスト側で docker restart が必要です（memo/SETUP.md 1.5節）。")
+
+# ── クイックアクセス ──────────────────────────────────────────────────────────
+q1, q2, q3, q4, q5 = st.columns(5)
+q1.page_link("pages/01_pipeline.py", label="パイプライン", icon="🚀", use_container_width=True)
+q2.page_link("pages/00_batch.py",    label="キュー",       icon="🗂️", use_container_width=True)
+q3.page_link("pages/08_sam2_masks.py", label="SAM2マスク", icon="🎭", use_container_width=True)
+q4.page_link("pages/04_training.py", label="3DGS学習",     icon="🧠", use_container_width=True)
+q5.page_link("pages/05_results.py",  label="結果確認",     icon="🖼️", use_container_width=True)
 
 # ── 実行中のタスク ─────────────────────────────────────────────────────────────
 st.markdown("### 実行中のタスク")
@@ -82,7 +128,29 @@ _pipeline_active = (
 )
 
 if not _pipeline_active:
-    st.caption("現在実行中のタスクはありません。")
+    # 各ページから起動された単品ジョブ（抽出・姿勢推定・マスク・学習）も表示する
+    _at = {}
+    try:
+        from queue_helper import load_active_task_file as _latf
+        _at = _latf() or {}
+        if _at.get("pid"):
+            os.kill(int(_at["pid"]), 0)   # 生存確認（例外=死んでいる）
+    except Exception:
+        _at = {}
+    if _at:
+        _el = (time.time() - _at.get("start_time", time.time())) / 60
+        st.info(f"▶ **{_at.get('label','ジョブ')}** — `{_at.get('scene','')}`（{_el:.1f} 分経過）")
+        if _pw_parse_progress is not None:
+            try:
+                _p, _l = _pw_parse_progress(_at)
+                if _p is not None:
+                    st.progress(_p, text=_l)
+            except Exception:
+                pass
+        time.sleep(5)
+        st.rerun()
+    else:
+        st.caption("現在実行中のタスクはありません。")
 else:
     _step        = _pl["step"]
     _exp_dir     = _pl.get("experiment_dir", "")
