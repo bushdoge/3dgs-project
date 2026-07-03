@@ -1,0 +1,18 @@
+# Streamlit テーマ設定（全ページ共通）
+# ホーム等のアクセント色（シアン系）と調和するダークテーマ
+
+[theme]
+base = "dark"
+primaryColor = "#2dd4bf"            # アクセント（テール）: ボタン・スライダー・フォーカス
+backgroundColor = "#0f141a"         # メイン背景（青みの暗灰）
+secondaryBackgroundColor = "#1a222c" # サイドバー・入力欄・カード
+textColor = "#e6edf3"
+linkColor = "#4cc9f0"
+font = "sans serif"
+
+[server]
+port = 8501
+address = "0.0.0.0"
+
+[browser]
+gatherUsageStats = false
