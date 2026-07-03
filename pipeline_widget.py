@@ -25,7 +25,9 @@ _BATCH_STEP_MAP = {
 _STEP_JA = {
     "extracting": "① フレーム抽出",
     "colmap":     "② COLMAP / HLoc",
+    "masks":      "②' SAM2マスク",
     "training":   "③ 3DGS 学習",
+    "rendering":  "④ レンダリング",
     "done":       "完了",
     "failed":     "失敗",
 }
@@ -121,24 +123,28 @@ def _parse_colmap_substeps(pl: dict) -> list:
         return []
 
     content = Path(log_path).read_text(errors="replace")
-    use_hloc = pl.get("use_hloc", True)
 
-    # ステップ数と名称を決定
-    if use_hloc:
+    # ステップ数と名称をログから自動判別する
+    # （use_hlocキーの有無に依存すると、キー欠落時に進捗が全く出なくなるため）
+    mc = re.findall(r'\[COLMAP (\d+)/4\]', content)
+    if mc:
+        markers, total_steps = mc, 4
+        step_pat = re.compile(r'\[COLMAP (\d+)/4\]')
+    else:
         m5 = re.findall(r'\[(\d+)/5\]', content)
         m4 = re.findall(r'\[(\d+)/4\]', content)
         total_steps = 5 if m5 else (4 if m4 else None)
         markers     = m5 if m5 else m4
         step_pat    = re.compile(r'\[(\d+)/' + str(total_steps or 5) + r'\]') if total_steps else None
-    else:
-        markers     = re.findall(r'\[COLMAP (\d+)/4\]', content)
-        total_steps = 4
-        step_pat    = re.compile(r'\[COLMAP (\d+)/4\]')
 
     if not total_steps:
         return []
 
     current_step = int(markers[-1]) if markers else 0
+    # 最終ステップ後に「完了:」が出ていれば全ステップ完了扱い
+    # （これが無いと最終ステップが永遠にrunning=進捗75%止まりで表示される）
+    if re.search(r'^完了:', content, re.MULTILINE):
+        current_step = total_steps + 1
     step_names   = _COLMAP_SUB.get(total_steps, {})
 
     # ステップ開始位置をコンテンツ内で特定
@@ -192,21 +198,21 @@ def _parse_progress(pl: dict) -> tuple:
     content = Path(log_path).read_text(errors="replace")
 
     if step == "extracting":
-        if pl.get("is_360"):
-            m = re.findall(r'\[(\d+)/(\d+)\]', content)
-            if m:
-                cur, tot = int(m[-1][0]), int(m[-1][1])
+        # is_360キーに依存せず、両フォーマットを順に試す
+        # （キー欠落時に進捗が全く出なくなるバグの対策）
+        m = re.findall(r'\[(\d+)/(\d+)\] 変換中', content)          # convert_360.py（360度）
+        if m:
+            cur, tot = int(m[-1][0]), int(m[-1][1])
+            pct = min(cur / tot, 1.0)
+            return pct, f"フレーム変換 {cur}/{tot} 枚 ({pct*100:.0f}%)"
+        tm = re.search(r'PROGRESS_TOTAL (\d+)', content)             # extract_frames.py（通常）
+        pm = re.findall(r'PROGRESS (\d+)/(\d+)', content)
+        if tm and pm:
+            tot = int(tm.group(1))
+            cur = int(pm[-1][0])
+            if tot > 0:
                 pct = min(cur / tot, 1.0)
-                return pct, f"フレーム変換 {cur}/{tot} 枚 ({pct*100:.0f}%)"
-        else:
-            tm = re.search(r'PROGRESS_TOTAL (\d+)', content)
-            pm = re.findall(r'PROGRESS (\d+)/(\d+)', content)
-            if tm and pm:
-                tot = int(tm.group(1))
-                cur = int(pm[-1][0])
-                if tot > 0:
-                    pct = min(cur / tot, 1.0)
-                    return pct, f"フレーム抽出 {cur}/{tot} 枚 ({pct*100:.0f}%)"
+                return pct, f"フレーム抽出 {cur}/{tot} 枚 ({pct*100:.0f}%)"
 
     elif step == "colmap":
         # サブステップから全体進捗を合成
@@ -221,20 +227,37 @@ def _parse_progress(pl: dict) -> tuple:
                            f'{running["cur"]:,}/{running["items"]:,} ({running["pct"]*100:.0f}%)'
                            if running["cur"] is not None
                            else f'[{running["num"]}/{total}] {running["name"]}')
+            elif running:
+                # 実行中だが内部進捗が取れないステップ（COLMAP本体のログ等）は名前を出す
+                overall = done_steps / total
+                label   = f'[{running["num"]}/{total}] {running["name"]} 実行中'
             else:
                 overall = done_steps / total
                 label   = f'ステップ {done_steps}/{total} 完了'
             return min(overall, 1.0), label
 
     elif step == "training":
-        total = pl.get("iterations", 30000)
-        tm = re.findall(rf'(\d+)/{total}', content)
-        if not tm:
-            tm = re.findall(r'\[ITER\s+(\d+)\]', content)
-        if tm:
-            cur = int(tm[-1])
+        # 総イテレーション数はtqdm行から直接取る（iterationsキー欠落時に
+        # デフォルト30000で割ってしまい「7000完了なのに23%」になるバグの対策）
+        tq = re.findall(r'(\d+)/(\d+)\s+\[', content)   # tqdm "cur/total [elapsed<eta"
+        if tq:
+            cur, total = int(tq[-1][0]), int(tq[-1][1])
+        else:
+            total = pl.get("iterations", 30000)
+            im = re.findall(r'\[ITER\s+(\d+)\]', content)
+            cur = int(im[-1]) if im else None
+        if cur is not None and total > 0:
             pct = min(cur / total, 1.0)
             return pct, f"学習 {cur:,}/{total:,} iter ({pct*100:.0f}%)"
+
+    elif step == "masks":
+        # SAM2マスク生成（generate_masks.py の PROGRESS <タグ> cur/total）
+        pm = re.findall(r'PROGRESS (\S+) (\d+)/(\d+)', content)
+        if pm:
+            tag, cur, tot = pm[-1][0], int(pm[-1][1]), int(pm[-1][2])
+            if tot > 0:
+                pct = min(cur / tot, 1.0)
+                return pct, f"マスク生成 [{tag}] {cur}/{tot} ({pct*100:.0f}%)"
 
     elif step == "rendering":
         m = re.findall(r'Rendering progress.*?(\d+)/(\d+)', content)
