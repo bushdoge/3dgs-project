@@ -17,41 +17,78 @@ st.set_page_config(
 )
 
 # ── 全ページ共通スタイル ─────────────────────────────────────────────────────
-# テーマ本体は .streamlit/config.toml（ダーク+テールアクセント）。ここは微調整のみ。
+# テーマ本体は .streamlit/config.toml（インクブルー×コーラル）。
+# 方針: 角丸+ホバーの「触って気持ちいい」UI。無機質にならないよう温色を差す。
 st.markdown("""
 <style>
-/* コンテンツ幅と余白を整える（wideでも読みやすい幅に） */
-.block-container { padding-top: 2.4rem; padding-bottom: 3rem; max-width: 1180px; }
+/* コンテンツ幅と余白 */
+.block-container { padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1180px; }
 
-/* 見出しの階層をはっきりさせつつ大きすぎを抑える */
-h1 { font-size: 1.75rem !important; letter-spacing: .01em; padding-bottom: .2rem; }
-h2 { font-size: 1.3rem  !important; margin-top: 1.2rem; }
-h3 { font-size: 1.08rem !important; }
+/* 見出し: 左にコーラルのアクセントバーを付けて階層を可視化 */
+h1 { font-size: 1.7rem !important; letter-spacing: .01em; }
+h2, h3 { position: relative; padding-left: .65rem !important; }
+h2::before, h3::before {
+  content: ""; position: absolute; left: 0; top: .28em; bottom: .28em;
+  width: 4px; border-radius: 2px;
+  background: linear-gradient(180deg, #ff8552, #ffd166);
+}
+h2 { font-size: 1.28rem !important; margin-top: 1.1rem; }
+h3 { font-size: 1.06rem !important; }
 
-/* サイドバー: 境界を薄く、ナビ項目を角丸に */
-[data-testid="stSidebar"] { border-right: 1px solid rgba(255,255,255,.06); }
-[data-testid="stSidebarNav"] a { border-radius: 8px; }
+/* サイドバー: ナビ項目を丸く、ホバーでじわっと */
+[data-testid="stSidebar"] { border-right: 1px solid rgba(255,255,255,.07); }
+[data-testid="stSidebarNav"] a {
+  border-radius: 10px; transition: background .15s ease, transform .1s ease;
+}
+[data-testid="stSidebarNav"] a:hover { transform: translateX(2px); }
 
-/* カード類（メトリクス・エクスパンダ）に薄い枠と角丸 */
-[data-testid="stMetric"] {
+/* カード類: 角丸+薄枠+ホバーで持ち上がる */
+[data-testid="stMetric"], [data-testid="stExpander"] {
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 14px;
+  transition: transform .12s ease, border-color .12s ease;
+}
+[data-testid="stMetric"] { padding: 12px 16px; }
+[data-testid="stMetric"]:hover, [data-testid="stExpander"]:hover {
+  border-color: rgba(255,133,82,.45);
+}
+
+/* ボタン: コーラル系。primaryは濃色文字（白文字だと読みづらい）*/
+.stButton > button, .stFormSubmitButton > button {
+  border-radius: 12px; transition: transform .1s ease, box-shadow .1s ease;
+}
+.stButton > button:hover, .stFormSubmitButton > button:hover {
+  transform: translateY(-1px); box-shadow: 0 3px 12px rgba(255,133,82,.25);
+}
+.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {
+  color: #26150c !important; font-weight: 700;
+}
+
+/* ページリンク(クイックアクセス等)をタイル化 */
+[data-testid="stPageLink-NavLink"] {
+  border: 1px solid rgba(255,255,255,.12); border-radius: 12px;
+  padding: .55rem .4rem; justify-content: center;
   background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px; padding: 10px 14px;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
 }
-[data-testid="stExpander"] {
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px;
+[data-testid="stPageLink-NavLink"]:hover {
+  transform: translateY(-2px); border-color: #ff8552; background: rgba(255,133,82,.08);
 }
 
-/* ボタンとログ表示 */
-.stButton > button { border-radius: 10px; }
+/* ログ・コード表示は小さめに */
 .stCode, pre, code { font-size: .78rem !important; }
 
-/* プログレスバーを少し太く */
-[data-testid="stProgress"] > div > div { height: 10px; border-radius: 6px; }
+/* プログレスバー: 太く、コーラル→ゴールドのグラデ */
+[data-testid="stProgress"] > div > div { height: 12px; border-radius: 7px; }
+[data-testid="stProgress"] div[role="progressbar"] > div {
+  background: linear-gradient(90deg, #ff8552, #ffd166) !important;
+  border-radius: 7px;
+}
 
-/* テーブル・データフレームの角丸 */
-[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+/* テーブル・画像の角丸 */
+[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+[data-testid="stImage"] img { border-radius: 10px; }
 
 hr { margin: .8rem 0; }
 </style>

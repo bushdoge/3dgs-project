@@ -47,14 +47,43 @@ def save_todos(todos):
     with open(TODO_FILE, "w", encoding="utf-8") as f:
         json.dump(todos, f, ensure_ascii=False, indent=2)
 
-# ── ヘッダー ──────────────────────────────────────────────────────────────────
-st.markdown(
-    '<div style="font-size:1.9rem;font-weight:700;letter-spacing:0.12em;color:#2dd4bf;'
-    'margin-bottom:0;">🔬 3DGS LAB</div>'
-    '<div style="font-size:0.72rem;color:#7a93a8;letter-spacing:0.22em;margin-top:0.15rem;'
-    'margin-bottom:1.1rem;">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>',
-    unsafe_allow_html=True,
-)
+# ── ヘッダー（ガウスくん + 日替わりひとこと）──────────────────────────────────
+_TAGLINES = [
+    "今日も百万粒、いい感じに焼いていこう",
+    "細線は今日も細い。だが俺たちはめげない",
+    "ガウシアンは友達。こわくない",
+    "スプラットは一日にして成らず",
+    "いい点群は、いい一日のはじまり",
+    "PSNRが上がると、ちょっとうれしい",
+    "今日のフローターは今日のうちに",
+]
+_daily = _TAGLINES[int(datetime.now().strftime("%Y%m%d")) % len(_TAGLINES)]
+
+st.markdown("""
+<style>
+.gauss-hero { display:flex; align-items:center; gap:18px; margin-bottom:1.0rem; }
+.gauss-chan { position:relative; width:72px; height:62px; flex:none;
+  background: radial-gradient(circle at 35% 32%, #ffd166, #ff8552 72%);
+  border-radius: 58% 42% 55% 45% / 55% 48% 52% 45%;
+  animation: gauss-bob 3.2s ease-in-out infinite;
+  box-shadow: 0 6px 18px rgba(255,133,82,.32); }
+.gauss-chan::before, .gauss-chan::after { content:""; position:absolute; top:25px;
+  width:7px; height:11px; background:#26150c; border-radius:50%;
+  animation: gauss-blink 4.5s infinite; }
+.gauss-chan::before { left:23px; } .gauss-chan::after { left:43px; }
+@keyframes gauss-bob { 0%,100%{ transform:translateY(0) rotate(-2deg);} 50%{ transform:translateY(-6px) rotate(2deg);} }
+@keyframes gauss-blink { 0%,92%,100%{ transform:scaleY(1);} 95%{ transform:scaleY(.1);} }
+.gauss-title { font-size:1.85rem; font-weight:800; letter-spacing:.1em; line-height:1.15;
+  background: linear-gradient(90deg, #ff8552, #ffd166 55%, #7ee8b2);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.gauss-sub { font-size:.72rem; color:#8fa3b8; letter-spacing:.2em; margin-top:.1rem; }
+.gauss-bubble { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.13);
+  border-radius:14px; padding:.5rem .95rem; font-size:.86rem; position:relative; margin-left:6px; }
+.gauss-bubble::before { content:""; position:absolute; left:-8px; top:50%; margin-top:-6px;
+  border-width:6px 8px 6px 0; border-style:solid;
+  border-color: transparent rgba(255,255,255,.13) transparent transparent; }
+</style>
+""", unsafe_allow_html=True)
 
 # ── ステータスカード ──────────────────────────────────────────────────────────
 @st.cache_data(ttl=10, show_spinner=False)
@@ -85,6 +114,26 @@ def _exp_count() -> int:
     return sum(1 for d in p.iterdir() if d.is_dir()) if p.exists() else 0
 
 _gpu = _gpu_status()
+
+# ガウスくんの吹き出し：GPUが死んでいたら最優先で騒ぐ、平常時は日替わりのひとこと
+if _gpu.startswith("未接続"):
+    _bubble = "GPUが見えないよ〜！ホスト側で <b>docker restart</b> お願い！(memo/SETUP.md 1.5節)"
+    _bubble_style = "border-color:#ff6b6b;color:#ffb3b3;"
+else:
+    _bubble = _daily
+    _bubble_style = ""
+
+st.markdown(f"""
+<div class="gauss-hero">
+  <div class="gauss-chan"></div>
+  <div>
+    <div class="gauss-title">3DGS LAB</div>
+    <div class="gauss-sub">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>
+  </div>
+  <div class="gauss-bubble" style="{_bubble_style}">{_bubble}</div>
+</div>
+""", unsafe_allow_html=True)
+
 c1, c2, c3 = st.columns(3)
 c1.metric("GPU", _gpu.split("｜")[0], _gpu.split("｜")[1] if "｜" in _gpu else None,
           delta_color="off")
@@ -150,7 +199,7 @@ if not _pipeline_active:
         time.sleep(5)
         st.rerun()
     else:
-        st.caption("現在実行中のタスクはありません。")
+        st.caption("いまは何も走っていません。キューにジョブを積むと、ここに進捗が出ます 🍵")
 else:
     _step        = _pl["step"]
     _exp_dir     = _pl.get("experiment_dir", "")
