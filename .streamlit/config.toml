@@ -1,13 +1,14 @@
 # Streamlit テーマ設定（全ページ共通）
-# ホーム等のアクセント色（シアン系）と調和するダークテーマ
+# 「黒+水色」のAI定番配色をやめ、温かみのあるインクブルー×コーラルに。
+# アクセント候補: コーラル#ff8552 / ミント#7ee8b2 / ゴールド#ffd166 / スカイ#8ab8e8 / ラベンダー#b7a5ff
 
 [theme]
 base = "dark"
-primaryColor = "#2dd4bf"            # アクセント（テール）: ボタン・スライダー・フォーカス
-backgroundColor = "#0f141a"         # メイン背景（青みの暗灰）
-secondaryBackgroundColor = "#1a222c" # サイドバー・入力欄・カード
-textColor = "#e6edf3"
-linkColor = "#4cc9f0"
+primaryColor = "#ff8552"             # コーラル: ボタン・スライダー・フォーカス
+backgroundColor = "#151a24"          # インクブルー（真っ黒より柔らかい）
+secondaryBackgroundColor = "#1f2733" # サイドバー・入力欄・カード
+textColor = "#eae6dc"                # 温かいオフホワイト（青白より目に優しい）
+linkColor = "#8ab8e8"
 font = "sans serif"
 
 [server]
