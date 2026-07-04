@@ -47,18 +47,7 @@ def save_todos(todos):
     with open(TODO_FILE, "w", encoding="utf-8") as f:
         json.dump(todos, f, ensure_ascii=False, indent=2)
 
-# ── ヘッダー（ガウスくん + 日替わりひとこと）──────────────────────────────────
-_TAGLINES = [
-    "今日も百万粒、いい感じに焼いていこう",
-    "細線は今日も細い。だが俺たちはめげない",
-    "ガウシアンは友達。こわくない",
-    "スプラットは一日にして成らず",
-    "いい点群は、いい一日のはじまり",
-    "PSNRが上がると、ちょっとうれしい",
-    "今日のフローターは今日のうちに",
-]
-_daily = _TAGLINES[int(datetime.now().strftime("%Y%m%d")) % len(_TAGLINES)]
-
+# ── ヘッダー（ガウスくん）─────────────────────────────────────────────────────
 st.markdown("""
 <style>
 .gauss-hero { display:flex; align-items:center; gap:18px; margin-bottom:1.0rem; }
@@ -77,11 +66,6 @@ st.markdown("""
   background: linear-gradient(90deg, #ff8552, #ffd166 55%, #7ee8b2);
   -webkit-background-clip: text; background-clip: text; color: transparent; }
 .gauss-sub { font-size:.72rem; color:#8fa3b8; letter-spacing:.2em; margin-top:.1rem; }
-.gauss-bubble { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.13);
-  border-radius:14px; padding:.5rem .95rem; font-size:.86rem; position:relative; margin-left:6px; }
-.gauss-bubble::before { content:""; position:absolute; left:-8px; top:50%; margin-top:-6px;
-  border-width:6px 8px 6px 0; border-style:solid;
-  border-color: transparent rgba(255,255,255,.13) transparent transparent; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,22 +99,13 @@ def _exp_count() -> int:
 
 _gpu = _gpu_status()
 
-# ガウスくんの吹き出し：GPUが死んでいたら最優先で騒ぐ、平常時は日替わりのひとこと
-if _gpu.startswith("未接続"):
-    _bubble = "GPUが見えないよ〜！ホスト側で <b>docker restart</b> お願い！(memo/SETUP.md 1.5節)"
-    _bubble_style = "border-color:#ff6b6b;color:#ffb3b3;"
-else:
-    _bubble = _daily
-    _bubble_style = ""
-
-st.markdown(f"""
+st.markdown("""
 <div class="gauss-hero">
   <div class="gauss-chan"></div>
   <div>
     <div class="gauss-title">3DGS LAB</div>
     <div class="gauss-sub">3D GAUSSIAN SPLATTING EXPERIMENT DASHBOARD</div>
   </div>
-  <div class="gauss-bubble" style="{_bubble_style}">{_bubble}</div>
 </div>
 """, unsafe_allow_html=True)
 
