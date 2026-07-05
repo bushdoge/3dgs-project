@@ -54,7 +54,6 @@ pts3d_w = (s * (R @ pts3d.T)).T + t
 tree = cKDTree(wire_pts)
 dist, idx = tree.query(pts3d_w)
 
-WIRE_R = 0.015
 for th_name, th in [("5cm", 0.05), ("10cm", 0.10), ("20cm", 0.20)]:
     near = dist < th
     n_wire = (wire_labels[idx[near]] == 1).sum()
@@ -64,16 +63,23 @@ for th_name, th in [("5cm", 0.05), ("10cm", 0.10), ("20cm", 0.20)]:
 
 # ── 厳密版：電線スパン部（電柱から0.3m以上離れた区間）だけで数える ────────────────
 # 緩い閾値だと電柱・地面・レール由来の近傍点を拾ってしまうため、
-# 「電柱の影響を受けない純粋な電線区間 × 線半径の2倍(3cm)」で測るのが本命の指標。
+# 電柱の影響を受けない純粋な電線区間だけで測るのが本命の指標。
+# 注意: GTサンプルは電線の中心線上、SfM点が付くのは電線の表面。
+#       太い電線ほど中心線から遠くなるので、距離から線半径を引いた「表面距離」で閾値判定する。
 POLE_XY = np.array([[-4.0, -1.8], [4.0, -1.2]])   # make_scene.py の pole_positions と一致させること
+sp_path = exp / "gt" / "scene_params.json"
+WIRE_R = json.load(open(sp_path))["wire_radius"] if sp_path.exists() else 0.015
 wire_only = wire_pts[wire_labels == 1]
 far_from_pole = np.min(np.linalg.norm(wire_only[:, None, :2] - POLE_XY[None], axis=2), axis=1) > 0.3
 span = wire_only[far_from_pole]
 sdist, _ = cKDTree(span).query(pts3d_w)
-print(f"\n[厳密] 電線スパン部GTサンプル: {len(span)}点")
+surf_dist = sdist - WIRE_R                        # 電線表面からの距離
+print(f"\n[厳密] 電線スパン部GTサンプル: {len(span)}点（線半径 {WIRE_R*1000:.0f}mm を補正）")
+strict = {}
 for th in (0.03, 0.05):
-    n = (sdist < th).sum()
-    print(f"[厳密] 電線スパンから{th*100:.0f}cm以内のSfM点: {n} / {len(pts3d)} ({n/len(pts3d)*100:.4f}%)")
+    n = int((surf_dist < th).sum())
+    strict[f"{int(th*100)}cm"] = n
+    print(f"[厳密] 電線スパン表面から{th*100:.0f}cm以内のSfM点: {n} / {len(pts3d)} ({n/len(pts3d)*100:.4f}%)")
 
 # ── 比較用：細線の画素占有率（GTマスクの平均白率）──────────────────────────────
 mask_dir = exp / "gt" / "mask_thin"
@@ -83,6 +89,12 @@ for f in sorted(mask_dir.glob("*.png"))[::8]:
     fracs.append((m > 127).mean())
 pix_share = np.mean(fracs) * 100
 print(f"\n細線の平均画素占有率: {pix_share:.3f}%")
+
+# 集計用JSON（run_sweep.pyが読む）
+json.dump({"n_registered": len(colmap_centers), "n_points3d": len(pts3d),
+           "align_rmse_m": float(rmse), "wire_span_points": strict,
+           "thin_pixel_share_pct": float(pix_share)},
+          open(exp / "gt" / "sfm_analysis.json", "w"), indent=1)
 print(f"→ 画素の{pix_share:.2f}%を占める細線に、SfM点の"
       f"{(dist < 0.10).sum()/len(pts3d)*100:.3f}%しか点が無い"
       f"（{pix_share / max((dist<0.10).sum()/len(pts3d)*100, 1e-9):.0f}倍の欠乏）")

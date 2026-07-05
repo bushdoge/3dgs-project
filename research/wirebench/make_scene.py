@@ -32,6 +32,9 @@ parser.add_argument("--test-one", action="store_true", help="1フレームだけ
 parser.add_argument("--enclosed", action="store_true",
                     help="シーンをテクスチャ付き円筒壁+天井で囲い、無限遠の空を排除する"
                          "（空フローター交絡の統制版。他の要素はすべて同一）")
+parser.add_argument("--wire-radius", type=float, default=0.015,
+                    help="電線の半径[m]（スイープ用の統制変数。デフォルト0.015≒距離9mで3px幅。"
+                         "フェンス棒は統制のため固定）")
 args = parser.parse_args(argv)
 
 OUT = Path(args.out)
@@ -172,8 +175,8 @@ for i, (px, py) in enumerate(pole_positions):
     bpy.context.object.name = f"pole{i}"
     bpy.context.object.data.materials.append(mat_pole)
 
-# 電線3本（カテナリー近似=放物線サグ、半径0.015 ≒ 距離9mで直径3px）
-WIRE_R = 0.015
+# 電線3本（カテナリー近似=放物線サグ。半径は--wire-radiusで統制）
+WIRE_R = args.wire_radius
 N_SAMP = 60
 for k, (dz, dy) in enumerate([(0.0, 0.0), (-0.25, 0.12), (-0.5, -0.12)]):
     p0 = np.array([pole_positions[0][0], pole_positions[0][1] + dy, POLE_H + dz - 0.1])
@@ -202,6 +205,12 @@ for j in range(n_bars + 1):
 np.savez(OUT / "gt" / "wire_points.npz",
          points=np.array([(x, y, z) for x, y, z, _ in thin_points], dtype=np.float32),
          labels=np.array([l for _, _, _, l in thin_points], dtype=np.int32))
+
+# シーンの統制変数を記録（スイープ結果の集計で使う）
+json.dump({"wire_radius": WIRE_R, "bar_radius": BAR_R, "frames": args.frames,
+           "samples": args.samples, "enclosed": bool(args.enclosed),
+           "res": args.res, "pole_positions": pole_positions},
+          open(OUT / "gt" / "scene_params.json", "w"), indent=1)
 
 # ── 囲い込み（--enclosed: 空フローター交絡の統制）────────────────────────────────
 if args.enclosed:

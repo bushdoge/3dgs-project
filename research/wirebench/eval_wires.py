@@ -54,6 +54,15 @@ arr = np.array([[r[1], r[2], r[3]] for r in rows])
 print(f"{'平均':12s} {arr[:,0].mean():9.2f} {arr[:,1].mean():9.2f} {arr[:,2].mean():9.2f}")
 print(f"\n→ 背景PSNRと細線PSNRの差: {arr[:,2].mean()-arr[:,1].mean():.2f} dB（大きいほど細線だけ壊れている）")
 
+# 集計用JSON（run_sweep.pyが読む）
+import json
+json.dump({"iteration": int(it), "model_dir": model_dir,
+           "psnr_all": float(arr[:, 0].mean()), "psnr_wire": float(arr[:, 1].mean()),
+           "psnr_bg": float(arr[:, 2].mean()),
+           "gap_db": float(arr[:, 2].mean() - arr[:, 1].mean()),
+           "psnr_wire_min": float(arr[:, 1].min()), "n_test_views": len(rows)},
+          open(out_dir / "summary.json", "w"), indent=1)
+
 # ── 比較図: 細線が最も壊れている視点で GT|render|差分 と拡大クロップ ──────────────
 worst = int(np.argmin([r[2] for r in rows]))
 name = rows[worst][0]
