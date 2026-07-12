@@ -21,7 +21,7 @@ def fresh(p):
 
 
 def profile_stats(gray, cx, cy, win):
-    """列cxの cy±win の縦プロファイルからディップのFWHMと深さを返す（測れなければNone）"""
+    """列cxの cy±win の縦プロファイルからディップの (FWHM, 深さ, 重心y[サブピクセル]) を返す"""
     h = gray.shape[0]
     y0, y1 = cy - win, cy + win + 1
     if y0 < 0 or y1 > h:
@@ -43,12 +43,17 @@ def profile_stats(gray, cx, cy, win):
     hi = c
     while hi < len(above) - 1 and above[hi + 1]:
         hi += 1
-    return float(hi - lo + 1), float(dmax / max(bg, 1e-6))
+    seg = dip[lo:hi + 1]
+    centroid = y0 + lo + float((seg * np.arange(len(seg))).sum() / seg.sum())
+    return float(hi - lo + 1), float(dmax / max(bg, 1e-6)), centroid
 
 
-def measure(img_bgr, mask_bool, win, step=4):
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    widths, depths = [], []
+def measure_paired(gt_bgr, ren_bgr, mask_bool, win, step=4):
+    """同一断面でGTとレンダの両方を測る。戻り値: (gt統計, ren統計, |重心差|のリスト[px])"""
+    gray_gt = cv2.cvtColor(gt_bgr, cv2.COLOR_BGR2GRAY)
+    gray_ren = cv2.cvtColor(ren_bgr, cv2.COLOR_BGR2GRAY)
+    out = {"gt": ([], []), "ren": ([], [])}
+    dc = []
     h, w = mask_bool.shape
     for cx in range(0, w, step):
         col = mask_bool[:, cx]
@@ -59,11 +64,18 @@ def measure(img_bgr, mask_bool, win, step=4):
         for run in runs:
             if len(run) > win:                                   # 縦に長すぎるラン（棒等）は除外
                 continue
-            r = profile_stats(gray, cx, int(run.mean()), win)
-            if r is not None:
-                widths.append(r[0])
-                depths.append(r[1])
-    return widths, depths
+            cy = int(run.mean())
+            r_gt = profile_stats(gray_gt, cx, cy, win)
+            r_ren = profile_stats(gray_ren, cx, cy, win)
+            if r_gt is not None:
+                out["gt"][0].append(r_gt[0])
+                out["gt"][1].append(r_gt[1])
+            if r_ren is not None:
+                out["ren"][0].append(r_ren[0])
+                out["ren"][1].append(r_ren[1])
+            if r_gt is not None and r_ren is not None:
+                dc.append(abs(r_ren[2] - r_gt[2]))               # 線中心のサブピクセル位置ずれ
+    return out, dc
 
 
 parser = argparse.ArgumentParser()
@@ -77,6 +89,7 @@ exp = Path(args.exp)
 rdir = exp / args.model_dir / "test" / f"ours_{args.iteration}"
 names = sorted(p.stem for p in (exp / "input").glob("*.png"))[::8]
 agg = {"gt": ([], []), "ren": ([], [])}
+center_diffs = []
 for i, name in enumerate(names):
     ren = cv2.imread(str(rdir / "renders" / f"{i:05d}.png"))
     gtimg = cv2.imread(str(rdir / "gt" / f"{i:05d}.png"))
@@ -85,11 +98,11 @@ for i, name in enumerate(names):
         continue
     if mask.shape != gtimg.shape[:2]:
         mask = cv2.resize(mask, (gtimg.shape[1], gtimg.shape[0]), interpolation=cv2.INTER_NEAREST)
-    mb = mask > 127
-    for key, img in [("gt", gtimg), ("ren", ren)]:
-        ws, ds = measure(img, mb, args.win)
-        agg[key][0].extend(ws)
-        agg[key][1].extend(ds)
+    out, dc = measure_paired(gtimg, ren, mask > 127, args.win)
+    for key in ["gt", "ren"]:
+        agg[key][0].extend(out[key][0])
+        agg[key][1].extend(out[key][1])
+    center_diffs.extend(dc)
 
 res = {"model_dir": args.model_dir, "iteration": int(args.iteration), "win_px": args.win}
 for key, label in [("gt", "GT"), ("ren", "render")]:
@@ -102,6 +115,14 @@ if res["width_gt_q25_50_75"] and res["width_ren_q25_50_75"]:
     ratio = res["width_ren_q25_50_75"][1] / max(res["width_gt_q25_50_75"][1], 1e-6)
     res["fatten_ratio_q50"] = round(ratio, 3)
     print(f"→ 太り倍率（FWHM中央値比 render/GT）: {ratio:.2f}")
+if center_diffs:
+    d = np.array(center_diffs)
+    res["n_paired"] = len(d)
+    res["center_offset_px_q25_50_75"] = [round(float(np.percentile(d, p)), 3) for p in (25, 50, 75)]
+    res["center_offset_frac_gt_0.5px"] = round(float((d > 0.5).mean()), 3)
+    res["center_offset_frac_gt_1px"] = round(float((d > 1.0).mean()), 3)
+    print(f"→ 線中心の位置ずれ |Δ| [q25/50/75] = {res['center_offset_px_q25_50_75']} px"
+          f"（>0.5pxが{res['center_offset_frac_gt_0.5px']*100:.0f}%・>1pxが{res['center_offset_frac_gt_1px']*100:.0f}%・対応断面{len(d)}）")
 out = fresh(exp / "gt" / f"wire_width_{args.model_dir}_{args.iteration}.json")
 json.dump(res, open(out, "w"), indent=1)
 print(f"保存: {out}")
