@@ -1,0 +1,9 @@
+run,exp_dir,model_dir,psnr_all,psnr_wire,psnr_bg,gap_db,psnr_wire_min,disappearance_rate,recall_ren_worst
+a1_plain,20260705_wb_r15mm_f40_open,output,20.2038,17.7485,20.3325,2.584,12.1924,0.0221,0.0
+a2_plain,20260705_wb_r15mm_f40_open,output_rerun,20.2889,16.2245,20.5833,4.3588,11.7994,0.1049,0.2964
+b1_inject,20260712_wb_r15mm_f40_open_inject,output,21.3597,16.5706,21.7291,5.1586,14.1153,0.0812,0.4502
+b2_inject,20260712_wb_r15mm_f40_open_inject,output_rerun,22.4849,17.7379,22.8485,5.1106,14.9552,0.1171,0.0
+c1_mip,20260705_wb_r15mm_f40_open,output_mip,27.2555,21.6238,27.7758,6.152,15.8482,0.0058,0.768
+c2_mip,20260705_wb_r15mm_f40_open,output_mip_rerun,23.9808,19.3739,24.3357,4.9617,13.9482,0.0212,0.9274
+d1_mip_inject,20260712_wb_r15mm_f40_open_inject,output_mip,19.8447,18.817,19.9905,1.1734,14.734,0.1166,0.1006
+d2_mip_inject,20260712_wb_r15mm_f40_open_inject,output_mip_rerun,22.3289,19.2457,22.6925,3.4468,14.1744,0.0515,0.8402

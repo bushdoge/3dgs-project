@@ -14,6 +14,7 @@
 | `run_sweep.py` | 上記＋COLMAP＋学習＋レンダを条件グリッドで一括実行するオーケストレータ。結果は `sweep_results.csv` に1行/条件で追記 |
 | `sweep_results.csv` | スイープ結果の集計表（実験名・条件・SfM点数・PSNR分解・落差dB） |
 | `detect_recall.csv` | 12実験ぶんの消失率メトリクス集計表（実験名・条件・R_gt・R_ren・正規化recall・消失率） |
+| `f40_2x2_runs.csv` | 疎視点（f40 open）2×2実験の全8run集計（素/Mip × 素init/オラクル注入 × 各2run。疎視点域は乱数分散が大きいため全セル2run） |
 | `figs/` | スイープ結果・消失率の図 |
 
 ## スイープ実行（推奨。以下の手動手順を全条件ぶん自動化したもの）
