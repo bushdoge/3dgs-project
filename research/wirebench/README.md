@@ -20,6 +20,8 @@
 | `mip_sweep_results.csv` | Mipスイープ集計表（実験×手法×run の18行。細線PSNR・gap・消失率・最悪視点recall） |
 | `analyze_gaussians.py` | 学習済みガウシアン(ply)の解剖：電線スパン近傍の数・不透明度・スケール分布（生値は同名.npzにも保存）＋霧診断。`--fog-dump N --fog-view frame_XXXX` で指定視点の視線を塞ぐガウシアンの素性（色・スパン距離等）をダンプ。**霧の有無の検出はレンダ側指標（R_ren等）で行い、本スクリプトは組成分析に使う**（中心視線ベースのfog_alphaは正当な近傍ジオメトリも拾うため検出用途には不適） |
 | `plot_opacity_hist.py` | 電線スパン3cm内ガウシアンの不透明度分布図 `figs/wire_opacity_hist.png` を生成（「素3DGSは透明のまま／Mipで二峰化」の機構図） |
+| `ablate_wire_gaussians.py` | 残差分解の介入実験：学習済みplyの電線上ガウシアンを編集（半透明分の削除/不透明化）して再レンダ用モデルdirを作る |
+| `measure_wire_width.py` | レンダ上の電線の見かけの太さ（プロファイルFWHM）とディップ深さを測定し、GT比の太り倍率を出す |
 | `figs/` | スイープ結果・消失率の図 |
 
 ## スイープ実行（推奨。以下の手動手順を全条件ぶん自動化したもの）
