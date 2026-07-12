@@ -28,6 +28,14 @@ import cv2
 import numpy as np
 
 
+def fresh(p):
+    # 実験dirを cp -al で複製すると gt/ 配下の成果物が元dirとinode共有になり、
+    # 上書き保存が元実験の結果を巻き添えで壊す。書く前にunlinkしてリンクを切る。
+    p = Path(p)
+    p.unlink(missing_ok=True)
+    return p
+
+
 def build_argparser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("exp", help="実験ディレクトリ")
@@ -164,7 +172,7 @@ def main():
                "hough_params": {"canny_lo": args.canny_lo, "canny_hi": args.canny_hi,
                                  "hough_thresh": args.hough_thresh, "min_len": args.min_len,
                                  "max_gap": args.max_gap}},
-              open(out_dir / "summary.json", "w"), indent=1)
+              open(fresh(out_dir / "summary.json"), "w"), indent=1)
 
     # ── 比較図: 細線が最も壊れている視点(PSNR基準)で GT|render|差分 と拡大クロップ ──────
     worst = int(np.argmin([r[2] for r in rows]))
@@ -180,7 +188,7 @@ def main():
     full = np.hstack([gt, ren])
     cv2.putText(full, "GT", (10, 40), 0, 1.2, (0, 0, 255), 3)
     cv2.putText(full, "3DGS render", (gt.shape[1] + 10, 40), 0, 1.2, (0, 0, 255), 3)
-    cv2.imwrite(str(out_dir / f"compare_{name}.png"), full)
+    cv2.imwrite(str(fresh(out_dir / f"compare_{name}.png")), full)
 
     # 細線マスクの重心まわりを2倍拡大でクロップ（上位2クラスタ）
     ys, xs = np.where(mask > 127)
@@ -195,7 +203,7 @@ def main():
             crop = np.hstack([cv2.resize(gtc, None, fx=z, fy=z, interpolation=cv2.INTER_NEAREST),
                               np.full((h * z, 8, 3), 255, np.uint8),
                               cv2.resize(rnc, None, fx=z, fy=z, interpolation=cv2.INTER_NEAREST)])
-            cv2.imwrite(str(out_dir / f"crop{ci}_{name}.png"), crop)
+            cv2.imwrite(str(fresh(out_dir / f"crop{ci}_{name}.png")), crop)
     print(f"\n比較図を保存: {out_dir}/（最悪視点 {name}）")
 
     # ── 消失率の診断図: recallが最も低い(最も消えている)視点で GT線=緑/レンダ検出=赤/被覆=黄 ──
@@ -223,7 +231,7 @@ def main():
         vis[covered] = (0, 255, 255)    # 黄: 被覆（正解位置かつ検出でtau px以内）
         cv2.putText(vis, f"detect overlay (worst R_ren={recall_rows[worst_r][2]:.2f})",
                     (10, 30), 0, 0.8, (255, 255, 255), 2)
-        cv2.imwrite(str(out_dir / f"detect_overlay_{rname}.png"), vis)
+        cv2.imwrite(str(fresh(out_dir / f"detect_overlay_{rname}.png")), vis)
         print(f"消失率診断図を保存: {out_dir}/detect_overlay_{rname}.png（最悪視点 {rname}, R_ren={recall_rows[worst_r][2]:.3f}）")
 
 

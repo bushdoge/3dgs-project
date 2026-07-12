@@ -12,6 +12,15 @@ import numpy as np
 import pycolmap
 from scipy.spatial import cKDTree
 
+
+def fresh(p):
+    # 実験dirを cp -al で複製すると gt/ 配下の成果物が元dirとinode共有になり、
+    # 上書き保存が元実験の結果を巻き添えで壊す。書く前にunlinkしてリンクを切る。
+    p = Path(p)
+    p.unlink(missing_ok=True)
+    return p
+
+
 exp = Path(sys.argv[1])
 rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
 gt = json.load(open(exp / "gt" / "poses.json"))
@@ -94,7 +103,7 @@ print(f"\n細線の平均画素占有率: {pix_share:.3f}%")
 json.dump({"n_registered": len(colmap_centers), "n_points3d": len(pts3d),
            "align_rmse_m": float(rmse), "wire_span_points": strict,
            "thin_pixel_share_pct": float(pix_share)},
-          open(exp / "gt" / "sfm_analysis.json", "w"), indent=1)
+          open(fresh(exp / "gt" / "sfm_analysis.json"), "w"), indent=1)
 print(f"→ 画素の{pix_share:.2f}%を占める細線に、SfM点の"
       f"{(dist < 0.10).sum()/len(pts3d)*100:.3f}%しか点が無い"
       f"（{pix_share / max((dist<0.10).sum()/len(pts3d)*100, 1e-9):.0f}倍の欠乏）")
@@ -113,6 +122,6 @@ img = cv2.imread(str(exp / "input" / f"{name0}.png"))
 for x, y in zip(u, v):
     if 0 <= x < img.shape[1] and 0 <= y < img.shape[0]:
         cv2.circle(img, (int(x), int(y)), 2, (0, 0, 255), -1)
-out = exp / "gt" / "sfm_points_overlay.png"
+out = fresh(exp / "gt" / "sfm_points_overlay.png")
 cv2.imwrite(str(out), img)
 print(f"\n可視化を保存: {out}（赤=SfM点。細線上に点が無いことを確認）")
