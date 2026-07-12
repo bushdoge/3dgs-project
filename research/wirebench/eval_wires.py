@@ -45,6 +45,9 @@ def build_argparser():
                    help="被覆判定の距離しきい値[px]（既定2）")
     p.add_argument("--band-radius", type=int, default=2,
                    help="検出をマスク周辺のこのバンド内に限定[px]（既定2）")
+    p.add_argument("--mask-dilate", type=int, default=2,
+                   help="PSNR用細線マスクの膨張半径[px]（既定2=従来の5×5。0で膨張なし。"
+                        "マスク希釈の寄与分析用。消失率側のband-radiusとは独立）")
     p.add_argument("--canny-lo", type=float, default=10.0)
     p.add_argument("--canny-hi", type=float, default=30.0)
     p.add_argument("--hough-thresh", type=int, default=8)
@@ -102,6 +105,9 @@ def main():
     model_dir = args.model_dir
     rdir = exp / model_dir / "test" / f"ours_{it}"
     out_dir = exp / "gt" / f"wire_eval_{model_dir}_{it}" if model_dir != "output" else exp / "gt" / f"wire_eval_{it}"
+    if args.mask_dilate != 2:
+        # 非標準の膨張半径では標準評価(summary.json等)を上書きしない（マスク希釈分析用の別dir）
+        out_dir = out_dir.with_name(out_dir.name + f"_md{args.mask_dilate}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # llffhold=8: テスト視点は名前順の 0,8,16,... 番目
@@ -110,7 +116,8 @@ def main():
 
     rows = []              # PSNR系（従来どおり）
     recall_rows = []       # 消失率系（新規）: name, r_gt, r_ren, n_covered_gt, n_covered_ren, n_total
-    kernel5 = np.ones((5, 5), np.uint8)
+    k = args.mask_dilate
+    kernel5 = np.ones((2 * k + 1, 2 * k + 1), np.uint8) if k > 0 else None
     for i, name in enumerate(test_names):
         ren = cv2.imread(str(rdir / "renders" / f"{i:05d}.png"))
         gt = cv2.imread(str(rdir / "gt" / f"{i:05d}.png"))
@@ -121,7 +128,7 @@ def main():
         if mask.shape != gt.shape[:2]:
             mask = cv2.resize(mask, (gt.shape[1], gt.shape[0]), interpolation=cv2.INTER_NEAREST)
         mb = mask > 127
-        m = cv2.dilate(mb.astype(np.uint8), kernel5).astype(bool)
+        m = cv2.dilate(mb.astype(np.uint8), kernel5).astype(bool) if kernel5 is not None else mb
         rows.append((name, psnr(ren, gt), psnr(ren, gt, np.repeat(m[..., None], 3, 2)),
                      psnr(ren, gt, np.repeat(~m[..., None], 3, 2)), m.mean() * 100))
 
@@ -169,6 +176,7 @@ def main():
                "recall_norm": float(recall_norm), "disappearance_rate": float(disappearance_rate),
                "recall_ren_worst": float(recall_ren_worst),
                "tau_px": args.tau, "band_px": args.band_radius,
+               "mask_dilate_px": args.mask_dilate,
                "hough_params": {"canny_lo": args.canny_lo, "canny_hi": args.canny_hi,
                                  "hough_thresh": args.hough_thresh, "min_len": args.min_len,
                                  "max_gap": args.max_gap}},

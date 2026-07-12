@@ -15,6 +15,11 @@
 | `sweep_results.csv` | スイープ結果の集計表（実験名・条件・SfM点数・PSNR分解・落差dB） |
 | `detect_recall.csv` | 12実験ぶんの消失率メトリクス集計表（実験名・条件・R_gt・R_ren・正規化recall・消失率） |
 | `f40_2x2_runs.csv` | 疎視点（f40 open）2×2実験の全8run集計（素/Mip × 素init/オラクル注入 × 各2run。疎視点域は乱数分散が大きいため全セル2run） |
+| `collect_mip_sweep.py` | Mipスイープ（第1波8条件×{素3DGS,Mip}＋アンカー条件の分散2run）の結果を実験dirから集計して `mip_sweep_results.csv` に出力 |
+| `plot_mip_sweep.py` | `mip_sweep_results.csv` から3面図 `figs/mip_sweep_radius.png` を生成（第1波と同配色、手法は線種で区別、×印=アンカー再学習run） |
+| `mip_sweep_results.csv` | Mipスイープ集計表（実験×手法×run の18行。細線PSNR・gap・消失率・最悪視点recall） |
+| `analyze_gaussians.py` | 学習済みガウシアン(ply)の解剖：電線スパン近傍の数・不透明度・スケール分布（生値は同名.npzにも保存）＋霧診断。`--fog-dump N --fog-view frame_XXXX` で指定視点の視線を塞ぐガウシアンの素性（色・スパン距離等）をダンプ。**霧の有無の検出はレンダ側指標（R_ren等）で行い、本スクリプトは組成分析に使う**（中心視線ベースのfog_alphaは正当な近傍ジオメトリも拾うため検出用途には不適） |
+| `plot_opacity_hist.py` | 電線スパン3cm内ガウシアンの不透明度分布図 `figs/wire_opacity_hist.png` を生成（「素3DGSは透明のまま／Mipで二峰化」の機構図） |
 | `figs/` | スイープ結果・消失率の図 |
 
 ## スイープ実行（推奨。以下の手動手順を全条件ぶん自動化したもの）
@@ -57,6 +62,9 @@ cd $EXP && python3 /workspace/research/wirebench/eval_wires.py . 7000
 # 消失率メトリクスのパラメータを変える場合（既定: tau=2px, band-radius=2px,
 # canny-lo=10, canny-hi=30, hough-thresh=8, min-len=8, max-gap=25）:
 #   eval_wires.py . 7000 output --tau 3 --band-radius 3
+# PSNR用マスクの膨張半径を変える場合（マスク希釈の分析用。既定2=従来どおり。
+# 非標準値の結果は wire_eval_*_mdN/ に出て標準評価を上書きしない）:
+#   eval_wires.py . 7000 output --mask-dilate 0
 ```
 
 ## 出力（GT一式は `$EXP/gt/`）
