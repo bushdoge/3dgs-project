@@ -1,0 +1,5 @@
+exp,method,init,iters,run,psnr_all,psnr_wire,psnr_bg,gap_db,psnr_wire_min,disappearance_rate,recall_ren_worst
+20260704_wb_r15mm_f80_open,3dgs,sfm,7000,1,31.50,23.46,32.42,8.96,17.56,0.0001,0.970
+20260704_wb_r15mm_f80_open,mip,sfm,7000,1,35.33,26.20,36.78,10.59,23.54,0.0005,0.969
+20260704_wb_r15mm_f80_open,rain-gs_ours_new,random,7000,1,26.14,16.47,28.75,12.28,13.45,0.2947,0.297
+20260704_wb_r15mm_f80_open,rain-gs_ours_new,random,30000,1,30.61,24.41,31.53,7.12,16.16,0.0155,0.849
