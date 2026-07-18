@@ -10,6 +10,8 @@
 #                                                   GT(1×)とロス。ss_filter=ss なら3DフィルタもN×カメラで計算
 #   --centroid_weight L                           … P2-4c オラクル: 細線断面のソフト重心差|Δc|をロスに加算
 #                                                   （位置ずれへの直接介入＝上界診断。設計図 roadmap §3.2）
+#   --near_prune D                                … P2-5 疎視点安定化: 学習カメラ中心からD[m]以内の
+#                                                   ガウシアンを500iterごとに削除（空フローター対策。§9h・roadmap§4）
 # 実行は tools/mip-splatting へコピーして venv で:
 #   cp research/wirebench/phase2/train_thin.py /workspace/tools/mip-splatting/
 #   cd /workspace/tools/mip-splatting && venv/bin/python train_thin.py -s <exp> -m <exp>/output_mip_ss2_f2x \
@@ -138,6 +140,10 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
     if args.wire_weight != 1.0:
         wire_masks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
         print(f"[thin] オラクルマスク重み w={args.wire_weight}（{len(wire_masks)}視点）")
+    cam_centers = None
+    if args.near_prune > 0:
+        cam_centers = torch.stack([c.camera_center for c in trainCameras]).cuda()
+        print(f"[thin] 近カメラprune: 学習カメラ中心 {args.near_prune}m 以内を500iterごとに削除")
     ctr_targets = None
     if args.centroid_weight > 0:
         cmasks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
@@ -252,6 +258,14 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
                 if iteration < opt.iterations - 100:
                     gaussians.compute_3D_filter(cameras=filterCameras)
 
+            if (cam_centers is not None and iteration % 500 == 0
+                    and iteration < opt.iterations - 500):
+                d = torch.cdist(gaussians.get_xyz, cam_centers).min(1).values
+                near = d < args.near_prune
+                if near.any():
+                    gaussians.prune_points(near)
+                    gaussians.compute_3D_filter(cameras=filterCameras)
+
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)
@@ -297,6 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("--supersample", type=int, default=1)
     parser.add_argument("--ss_filter", choices=["ss", "base"], default="ss")
     parser.add_argument("--centroid_weight", type=float, default=0.0)
+    parser.add_argument("--near_prune", type=float, default=0.0)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
