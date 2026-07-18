@@ -14,7 +14,11 @@ models = ["output", "output_mip", "output_mip_w3", "output_mip_w10", "output_mip
           "output_mip_vad",
           "output_mip_ss2_f2x", "output_mip_ss2_f1x", ("output_mip_30k", 30000),
           ("output_mip_30k_rerun", 30000), ("output_mip_w3_30k", 30000),
-          ("output_mip_w3_30k_rerun", 30000), ("output_mip_adg2_30k", 30000)]
+          ("output_mip_w3_30k_rerun", 30000), ("output_mip_adg2_30k", 30000),
+          ("output_mip_30k_ks005", 30000), ("output_mip_30k_ks005_rerun", 30000),
+          ("output_mip_30k_ks0025", 30000), ("output_mip_30k_ks03", 30000),
+          ("output_mip_ctr002_30k", 30000), ("output_mip_ctr02_30k", 30000),
+          ("output_mip_ctr0002_30k", 30000)]
 
 rows = []
 for m in models:

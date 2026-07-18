@@ -8,6 +8,8 @@
 #   --view_adapt                                  … P2-3 mask-free: 視点選択確率∝視点ロスEMA（一様と半々で混合）
 #   --supersample N --ss_filter {ss,base}         … P2-4a: N倍解像度でレンダ→N×N平均プールで1×に落として
 #                                                   GT(1×)とロス。ss_filter=ss なら3DフィルタもN×カメラで計算
+#   --centroid_weight L                           … P2-4c オラクル: 細線断面のソフト重心差|Δc|をロスに加算
+#                                                   （位置ずれへの直接介入＝上界診断。設計図 roadmap §3.2）
 # 実行は tools/mip-splatting へコピーして venv で:
 #   cp research/wirebench/phase2/train_thin.py /workspace/tools/mip-splatting/
 #   cd /workspace/tools/mip-splatting && venv/bin/python train_thin.py -s <exp> -m <exp>/output_mip_ss2_f2x \
@@ -57,6 +59,63 @@ def load_wire_masks(source_path, mask_dir, cameras):
     return masks
 
 
+LUMA = torch.tensor([0.299, 0.587, 0.114]).view(3, 1, 1)
+
+
+def soft_centroid(prof, eps=1e-6):
+    """輝度プロファイル(n,L)のディップのソフト重心と質量。微分可能（tail_map系の重心のtorch版）"""
+    bg = (prof[:, :3].mean(1) + prof[:, -3:].mean(1)) / 2
+    dip = torch.relu(bg[:, None] - prof)
+    mass = dip.sum(1)
+    x = torch.arange(prof.shape[1], device=prof.device, dtype=prof.dtype)
+    pos = (dip * x).sum(1) / (mass + eps)
+    return pos, mass
+
+
+def build_centroid_targets(cameras, masks, win=14):
+    """視点ごとに細線断面のインデックスとGT重心を前計算。返り値: uid → dict(tensors on GPU)"""
+    targets = {}
+    x = torch.arange(2 * win + 1)
+    for cam in cameras:
+        mb = masks[cam.uid].cpu().numpy()
+        h, w = mb.shape
+        cols, cys = [], []
+        for cx in range(0, w, 4):
+            ys = np.where(mb[:, cx])[0]
+            if len(ys) == 0:
+                continue
+            for run in np.split(ys, np.where(np.diff(ys) > 1)[0] + 1):
+                if len(run) > win:
+                    continue
+                cy = int(run.mean())
+                if cy - win < 0 or cy + win + 1 > h:
+                    continue
+                cols.append(cx)
+                cys.append(cy)
+        if not cols:
+            continue
+        cxs = torch.tensor(cols)
+        idx_y = torch.tensor(cys)[:, None] - win + x[None, :]          # (n, 2w+1)
+        gray_gt = (cam.original_image.cpu() * LUMA).sum(0)             # (H,W)
+        prof_gt = gray_gt[idx_y, cxs[:, None]]
+        c_gt, m_gt = soft_centroid(prof_gt)
+        ok = m_gt > 0.03 * (2 * win + 1)      # GTディップが十分ある断面のみ（輝度0-1スケール）
+        targets[cam.uid] = {"cx": cxs[ok].cuda(), "iy": idx_y[ok].cuda(),
+                            "c_gt": c_gt[ok].cuda(), "m_gt": m_gt[ok].cuda()}
+    return targets
+
+
+def centroid_loss(image, tgt):
+    """レンダ画像(3,H,W)に対する断面重心整合ロス（px単位のHuber平均）"""
+    gray = (image * LUMA.to(image.device)).sum(0)
+    prof = gray[tgt["iy"], tgt["cx"][:, None]]
+    c_r, m_r = soft_centroid(prof)
+    gate = (m_r.detach() > 0.3 * tgt["m_gt"])   # 線がまだ描けていない断面は位置を問わない
+    if gate.sum() == 0:
+        return image.sum() * 0.0
+    return torch.nn.functional.huber_loss(c_r[gate], tgt["c_gt"][gate], delta=1.0)
+
+
 def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -79,6 +138,12 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
     if args.wire_weight != 1.0:
         wire_masks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
         print(f"[thin] オラクルマスク重み w={args.wire_weight}（{len(wire_masks)}視点）")
+    ctr_targets = None
+    if args.centroid_weight > 0:
+        cmasks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
+        ctr_targets = build_centroid_targets(trainCameras, cmasks)
+        n_sec = sum(len(t["c_gt"]) for t in ctr_targets.values())
+        print(f"[thin] 断面重心整合ロス λ={args.centroid_weight}（{len(ctr_targets)}視点・{n_sec}断面）")
     err_ema = {}      # P2-2a: uid → 誤差EMAマップ(H×W, fp16)
     view_ema = {}     # P2-3:  uid → 視点ロスEMA(スカラー)
     if args.adaptive_gamma > 0:
@@ -144,6 +209,8 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
         else:
             Ll1 = (d * w[None]).sum() / (w.sum() * 3)         # 重み付き平均＝ロススケールを保つ
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        if ctr_targets is not None and uid in ctr_targets:
+            loss = loss + args.centroid_weight * centroid_loss(image, ctr_targets[uid])
         loss.backward()
 
         with torch.no_grad():
@@ -229,6 +296,7 @@ if __name__ == "__main__":
     parser.add_argument("--view_adapt", action="store_true")
     parser.add_argument("--supersample", type=int, default=1)
     parser.add_argument("--ss_filter", choices=["ss", "base"], default="ss")
+    parser.add_argument("--centroid_weight", type=float, default=0.0)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
