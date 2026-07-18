@@ -23,6 +23,8 @@
 | `ablate_wire_gaussians.py` | 残差分解の介入実験：学習済みplyの電線上ガウシアンを編集（半透明分の削除/不透明化）して再レンダ用モデルdirを作る |
 | `measure_wire_width.py` | レンダ上の電線の見かけの太さ（プロファイルFWHM）とディップ深さを測定し、GT比の太り倍率と線中心のサブピクセル位置ずれ分布を出す |
 | `error_budget.py` | 残差の誤差収支：細線マスク内の二乗誤差を 輝度/色・位置ずれ/形状・裾集中度 に分解する |
+| `tail_map.py` | 裾の空間分布診断：誤差上位断面がどの視点・線上のどこに集中するかを可視化（視点別シェア・隣接クラスタリング率・GT重畳ヒートマップ）。出力は `$EXP/gt/tail_map_<model>_<iter>.{json,png}` |
+| `phase2/` | Phase 2（AA前提の細線特化最適化）のコード。`train_thin.py`（mip-splatting改の学習: L1画素重み3方式＋視点適応サンプリング。tools/mip-splatting へコピーして venv 実行）・`tail_corr3d.py`（裾の3D対応診断。要 OpenEXR）・`collect_wave1.py`＋`phase2_wave1_results.csv`（第1波の集計） |
 | `figs/` | スイープ結果・消失率の図 |
 
 ## スイープ実行（推奨。以下の手動手順を全条件ぶん自動化したもの）
