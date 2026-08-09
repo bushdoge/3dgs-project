@@ -7,7 +7,8 @@
 
 | ファイル | 役割 |
 |---|---|
-| `make_scene.py` | Blenderで合成シーン（電線3本・フェンス・電柱・建物）を構築し、周回視点の学習画像＋GT一式をレンダリング。`--wire-radius`（電線半径m）、`--frames`（視点数）、`--enclosed`（空なし統制版）で条件を統制 |
+| `make_scene.py` | Blenderで合成シーン（電線3本・フェンス・電柱・建物）を構築し、周回視点の学習画像＋GT一式をレンダリング。`--wire-radius`（電線半径m）、`--frames`（視点数）、`--enclosed`（空なし統制版）、`--layout`／`--fence`（下記「シーン構造の切り替え」）で条件を統制 |
+| `scene_stats.py` | GT深度EXRとGT細線マスクからシーンの見え方を定量（空占有率・**細線背後の空率**・細線画素占有率）。シーン間で背景の性質を揃える/変えるときの検算に使う。要 OpenEXR |
 | `analyze_sfm.py` | COLMAP点群をGT座標にUmeyama位置合わせし、細線上のSfM点の欠乏を定量。厳密版=電線スパンの**表面**から3cm以内（中心線距離−線半径で判定。半径はgt/scene_params.jsonから自動取得） |
 | `eval_wires.py` | 学習済み3DGSのテストレンダを 全体/細線領域/背景 PSNR に分解して評価し、比較図を出力。加えて2D線検出（Canny→HoughLinesP）ベースの**消失率**（GT細線recallに対するレンダrecallの正規化欠損）を算出し診断図を出力 |
 | `inject_points.py` | オラクル点注入（キラー実験）：GTの電線中心線点をUmeyama逆変換でCOLMAP点群に追加し `<dst>/sparse/0` を書き出す。dstにはinput/gt/imagesを用意しておく |
@@ -26,6 +27,31 @@
 | `tail_map.py` | 裾の空間分布診断：誤差上位断面がどの視点・線上のどこに集中するかを可視化（視点別シェア・隣接クラスタリング率・GT重畳ヒートマップ）。出力は `$EXP/gt/tail_map_<model>_<iter>.{json,png}` |
 | `phase2/` | Phase 2（AA前提の細線特化最適化）のコード。`train_thin.py`（mip-splatting改の学習: L1画素重み3方式＋視点適応サンプリング。tools/mip-splatting へコピーして venv 実行）・`tail_corr3d.py`（裾の3D対応診断。要 OpenEXR）・`collect_wave1.py`＋`phase2_wave1_results.csv`（第1波の集計） |
 | `figs/` | スイープ結果・消失率の図 |
+
+## シーン構造の切り替え（複数シーン検証）
+
+結論のシーン非依存性を確かめるため、`make_scene.py` / `run_sweep.py` に直交する2つのフラグがある。
+**既定値は従来シーンと完全に同一**で、既定のままなら既存実験と1バイトも変わらない。
+
+| フラグ | 値 | 内容 |
+|---|---|---|
+| `--layout` | `base`（既定） | 電柱2本・平行な電線3本（従来シーン） |
+| | `crossing` | 電柱4本（高さ5.6/3.6m）・2方向の電線6本が画像上で交差する。**構造**を変える軸（線方向の多様性・相互オクルージョン・高さ段違い。背景と線半径は base と同じ） |
+| | `street` | **ジオメトリは base と完全同一**のまま、カメラ軌道 r=8.5 の外側（r=11〜14m）に高さ6〜10mの建物リングを置いて電線の背後を高周波の壁面で埋める。**背景**を変える軸（細線背後の空率 52%→6%）。空自体は上方に残るので `--enclosed` とは別物 |
+| `--fence` | `periodic`（既定） / `random` | 柵の縦棒を等間隔／ランダム間隔にする。SfM点欠乏が周期構造のマッチング曖昧性由来かを単独で検定するための軸（`--fence-seed` で再現） |
+
+- 実験名は既定から外れた軸だけサフィックスが付く（`_Lcrossing` / `_Frandom`）。
+- 電柱の本数・位置は `gt/scene_params.json` に記録され `analyze_sfm.py` が読む（ハードコードしない）。
+- `gt/scene_params.json` には画面上の電線幅[px]の分布（`wire_width_px`）も記録される。
+  レイアウトで被写体距離が変わるので、シーン比較のときは幅が揃っているかを必ず確認する。
+
+```bash
+# crossing シーンで密(f80)・疎(f40)を一括生成→SfM→素3DGS 7k
+python3 research/wirebench/run_sweep.py --radii 0.015 --frames 80 40 \
+    --variants open --iters 7000 --layout crossing
+# 背景の性質の検算
+python3 research/wirebench/scene_stats.py experiments/*_f80_open experiments/*_f80_open_Lstreet
+```
 
 ## スイープ実行（推奨。以下の手動手順を全条件ぶん自動化したもの）
 

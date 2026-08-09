@@ -31,6 +31,10 @@ parser.add_argument("--variants", nargs="+", default=["open", "enclosed"],
                     choices=["open", "enclosed"])
 parser.add_argument("--iters", type=int, default=7000)
 parser.add_argument("--samples", type=int, default=64)
+parser.add_argument("--layout", default="base", choices=["base", "crossing", "street"],
+                    help="シーン構造（make_scene.py の --layout）。base 以外は実験名に _L<layout> が付く")
+parser.add_argument("--fence", default="periodic", choices=["periodic", "random"],
+                    help="柵の並び（make_scene.py の --fence）。periodic 以外は実験名に _Frandom が付く")
 parser.add_argument("--date", default=datetime.now().strftime("%Y%m%d"),
                     help="実験名の日付プレフィクス（再開時は初回実行日を指定）")
 args = parser.parse_args()
@@ -46,6 +50,36 @@ def run(cmd, log_path, cwd=None):
         raise RuntimeError(f"失敗(exit {r.returncode}): {' '.join(map(str, cmd))}  → {log_path}")
 
 
+def append_row(row):
+    """結果CSVに1行追記する。列を追加した版で古いCSVに追記すると列がずれるので、
+    既存ヘッダに無い列があれば .bak を残したうえで旧行に既定値を埋めて書き直す。"""
+    if not CSV_PATH.exists():
+        with open(CSV_PATH, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(row.keys()))
+            w.writeheader()
+            w.writerow(row)
+        return
+    with open(CSV_PATH, newline="") as f:
+        old = list(csv.DictReader(f))
+        old_fields = list(old[0].keys()) if old else []
+    missing = [k for k in row if k not in old_fields]
+    if missing:
+        print(f"  （結果CSVに列を追加: {missing} → {CSV_PATH.name}.bak にバックアップ）", flush=True)
+        CSV_PATH.replace(CSV_PATH.with_suffix(".csv.bak"))
+        fields = list(row.keys())
+        defaults = {"layout": "base", "fence": "periodic", "wire_px_p50": ""}
+        with open(CSV_PATH, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            for r in old:
+                w.writerow({k: r.get(k, defaults.get(k, "")) for k in fields})
+            w.writerow(row)
+        return
+    with open(CSV_PATH, "a", newline="") as f:
+        csv.DictWriter(f, fieldnames=old_fields).writerow(
+            {k: row.get(k, "") for k in old_fields})
+
+
 def require_gpu(stage, exp_name):
     import torch
     if not torch.cuda.is_available():
@@ -55,7 +89,10 @@ def require_gpu(stage, exp_name):
 
 
 def process(radius, n_frames, variant):
-    name = f"{args.date}_wb_r{int(radius*1000):02d}mm_f{n_frames}_{variant}"
+    # 実験名は従来規約を維持し、既定から外れた軸だけサフィックスで足す（既存33実験と衝突しない）
+    suffix = ("" if args.layout == "base" else f"_L{args.layout}") \
+             + ("" if args.fence == "periodic" else "_Frandom")
+    name = f"{args.date}_wb_r{int(radius*1000):02d}mm_f{n_frames}_{variant}{suffix}"
     exp = WS / "experiments" / name
     log = exp / "sweep.log"
     exp.mkdir(parents=True, exist_ok=True)
@@ -68,7 +105,7 @@ def process(radius, n_frames, variant):
         print("  1) render: 実行", flush=True)
         cmd = [BLENDER, "-b", "-P", WB / "make_scene.py", "--",
                "--out", exp, "--frames", n_frames, "--samples", args.samples,
-               "--wire-radius", radius]
+               "--wire-radius", radius, "--layout", args.layout, "--fence", args.fence]
         if variant == "enclosed":
             cmd.append("--enclosed")
         run(cmd, log)
@@ -117,6 +154,8 @@ def process(radius, n_frames, variant):
     sp = json.load(open(exp / "gt/scene_params.json"))
     row = {
         "exp": name, "wire_radius_m": radius, "frames": n_frames, "variant": variant,
+        "layout": sp.get("layout", "base"), "fence": sp.get("fence", "periodic"),
+        "wire_px_p50": sp.get("wire_width_px", {}).get("p50", ""),
         "iters": args.iters,
         "sfm_points": sfm["n_points3d"], "wire_span_pts_3cm": sfm["wire_span_points"]["3cm"],
         "thin_px_share_pct": round(sfm["thin_pixel_share_pct"], 3),
@@ -125,13 +164,8 @@ def process(radius, n_frames, variant):
         "psnr_wire_min": round(ev["psnr_wire_min"], 2),
         "align_rmse_m": round(sfm["align_rmse_m"], 4), "samples": sp["samples"],
     }
-    new_file = not CSV_PATH.exists()
-    with open(CSV_PATH, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if new_file:
-            w.writeheader()
-        # 同名実験の既存行は許容（最新行を採用する運用）
-        w.writerow(row)
+    # 同名実験の既存行は許容（最新行を採用する運用）
+    append_row(row)
     print(f"  ✔ 完了: gap={row['gap_db']}dB wire={row['psnr_wire']}dB "
           f"(SfM点 {row['wire_span_pts_3cm']})", flush=True)
 

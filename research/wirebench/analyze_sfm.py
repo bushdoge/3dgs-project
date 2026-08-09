@@ -75,9 +75,12 @@ for th_name, th in [("5cm", 0.05), ("10cm", 0.10), ("20cm", 0.20)]:
 # 電柱の影響を受けない純粋な電線区間だけで測るのが本命の指標。
 # 注意: GTサンプルは電線の中心線上、SfM点が付くのは電線の表面。
 #       太い電線ほど中心線から遠くなるので、距離から線半径を引いた「表面距離」で閾値判定する。
-POLE_XY = np.array([[-4.0, -1.8], [4.0, -1.2]])   # make_scene.py の pole_positions と一致させること
 sp_path = exp / "gt" / "scene_params.json"
-WIRE_R = json.load(open(sp_path))["wire_radius"] if sp_path.exists() else 0.015
+sp = json.load(open(sp_path)) if sp_path.exists() else {}
+WIRE_R = sp.get("wire_radius", 0.015)
+# 電柱位置は scene_params.json（make_scene.py が書く）から読む。--layout で本数・位置が変わるため。
+# 旧実験の scene_params.json には pole_positions が無いことがあるので base の値をfallbackにする。
+POLE_XY = np.array(sp.get("pole_positions", [[-4.0, -1.8], [4.0, -1.2]]), dtype=float)[:, :2]
 wire_only = wire_pts[wire_labels == 1]
 far_from_pole = np.min(np.linalg.norm(wire_only[:, None, :2] - POLE_XY[None], axis=2), axis=1) > 0.3
 span = wire_only[far_from_pole]
