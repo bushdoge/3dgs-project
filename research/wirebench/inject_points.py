@@ -27,8 +27,14 @@ rec = pycolmap.Reconstruction(str(src / "sparse" / "0"))
 gt = json.load(open(src / "gt" / "poses.json"))
 wp = np.load(src / "gt" / "wire_points.npz")
 wire = wp["points"][wp["labels"] == 1]          # 電線のみ（フェンス棒は注入しない）
-n_wires = 3
+# 電線本数は scene_params.json から読む（--layout で変わる。旧実験には無いので3をfallback）。
+# 2026-09-06 のコード監査：3固定だと crossing/street 等で線をまたいで補間し、
+# 存在しない空中の直線上に点を注入してしまう。
+import json as _json
+_sp = src / "gt" / "scene_params.json"
+n_wires = (_json.load(open(_sp)).get("n_wires", 3) if _sp.exists() else 3)
 per = len(wire) // n_wires
+print(f"電線本数 n_wires={n_wires}（1本あたり {per} サンプル）")
 
 # ── Umeyama相似変換（COLMAP→GT）を推定し、その逆でGT点をCOLMAP座標へ ─────────
 def umeyama(src_pts, dst_pts):

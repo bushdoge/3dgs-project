@@ -47,7 +47,7 @@ args = parser.parse_args()
 
 exp = Path(args.exp)
 rdir = exp / args.model_dir / "test" / f"ours_{args.iteration}"
-names = sorted(p.stem for p in (exp / "input").glob("*.png"))[::8]
+names = test_view_names(exp)
 win = args.win
 
 poses = json.load(open(exp / "gt" / "poses.json"))
@@ -152,6 +152,7 @@ A = per_point_mean(np.isin(views, uviews[::2]))
 B = per_point_mean(np.isin(views, uviews[1::2]))
 common = sorted(set(A) & set(B))
 from scipy.stats import spearmanr
+import sys as _sys; _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent)); from testviews import test_view_names
 rho, pval = spearmanr([A[k] for k in common], [B[k] for k in common])
 print(f"[1] 3D点ごとの誤差の視点半区分間Spearman相関: rho={rho:.3f} (p={pval:.1e}, n={len(common)})")
 

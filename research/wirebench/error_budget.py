@@ -13,6 +13,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import sys as _sys; _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
 
 
 def fresh(p):
@@ -49,7 +50,7 @@ args = parser.parse_args()
 
 exp = Path(args.exp)
 rdir = exp / args.model_dir / "test" / f"ours_{args.iteration}"
-names = sorted(p.stem for p in (exp / "input").glob("*.png"))[::8]
+names = test_view_names(exp)
 
 E_y = E_c = 0.0                     # 1. 輝度/色
 sec_orig, sec_shift = [], []        # 2. 断面ごとの (元の二乗誤差, シフト後の二乗誤差)

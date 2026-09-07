@@ -12,6 +12,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import sys as _sys; _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
 
 
 def fresh(p):
@@ -87,7 +88,7 @@ args = parser.parse_args()
 
 exp = Path(args.exp)
 rdir = exp / args.model_dir / "test" / f"ours_{args.iteration}"
-names = sorted(p.stem for p in (exp / "input").glob("*.png"))[::8]
+names = test_view_names(exp)
 agg = {"gt": ([], []), "ren": ([], [])}
 center_diffs = []
 for i, name in enumerate(names):

@@ -75,8 +75,10 @@ def detect_line_map(img_bgr, band_mask, canny_lo, canny_hi, hough_thresh, min_le
                              minLineLength=min_len, maxLineGap=max_gap)
     det = np.zeros(gray.shape, np.uint8)
     if lines is not None:
-        for l in lines[:, 0]:
-            x1, y1, x2, y2 = l
+        # OpenCV 4系は (N,1,4)、5系は (N,4) を返す。どちらでも動くよう正規化する
+        # （2026-09-04: コンテナのcv2が5.0.0になり、旧来の lines[:,0] が壊れたため）
+        for l in np.asarray(lines).reshape(-1, 4):
+            x1, y1, x2, y2 = (int(v) for v in l)
             cv2.line(det, (x1, y1), (x2, y2), 255, 1)
     return cv2.bitwise_and(det, det, mask=band_mask)
 
@@ -91,6 +93,44 @@ def covered_fraction(det_map, mask_bool, tau):
     covered = (dist <= tau) & mask_bool
     n_covered = int(covered.sum())
     return n_covered / total, n_covered, total
+
+
+def load_wire_bar_splitter(exp):
+    """細線マスクを『電線』と『フェンス棒』に分ける関数を返す。GTが無ければ None。
+
+    細線マスク（pass_index=1）には電線とフェンス縦棒の両方が入る。棒の半径は固定で
+    電線だけが --wire_radius で変わるため、太さスイープでマスクの構成比が大きく変わり、
+    「太いほど悪い」という交絡を生んでいた（2026-09-06 の監査で発覚・§9ab）。
+    GTの電線中心線点群を各視点へ投影し、マスク画素を最近傍ラベルで分類する。
+    """
+    try:
+        import json as _json
+        from scipy.spatial import cKDTree
+        poses = _json.load(open(exp / "gt" / "poses.json"))
+        d = np.load(exp / "gt" / "wire_points.npz")
+        P, LB = d["points"], d["labels"]
+    except Exception:
+        return None
+
+    def split(name, mask_bool):
+        if name not in poses.get("frames", {}):
+            return None
+        C = np.array(poses["frames"][name]); W2C = np.linalg.inv(C)
+        Xc = (W2C[:3, :3] @ P.T + W2C[:3, 3:4]).T
+        zc = -Xc[:, 2]
+        u = poses["cx"] + poses["fx"] * Xc[:, 0] / np.maximum(zc, 1e-6)
+        v = poses["cy"] - poses["fy"] * Xc[:, 1] / np.maximum(zc, 1e-6)
+        H, W = mask_bool.shape
+        ok = (zc > 0.1) & (u > -50) & (u < W + 50) & (v > -50) & (v < H + 50)
+        ys, xs = np.where(mask_bool)
+        if ok.sum() < 2 or ys.size == 0:
+            return None
+        _, idx = cKDTree(np.stack([u[ok], v[ok]], 1)).query(np.stack([xs, ys], 1))
+        cls = LB[ok][idx]
+        wire = np.zeros_like(mask_bool); wire[ys[cls == 1], xs[cls == 1]] = True
+        bar = np.zeros_like(mask_bool); bar[ys[cls == 2], xs[cls == 2]] = True
+        return wire, bar
+    return split
 
 
 def band_from_mask(mask_bool, band_radius):
@@ -110,11 +150,28 @@ def main():
         out_dir = out_dir.with_name(out_dir.name + f"_md{args.mask_dilate}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # llffhold=8: テスト視点は名前順の 0,8,16,... 番目
-    names = sorted(p.stem for p in (exp / "input").glob("*.png"))
+    # llffhold=8: テスト視点は名前順の 0,8,16,... 番目。
+    # **ただし 3DGS が並べるのは COLMAP に登録された画像**であって input/ の全ファイルではない。
+    # 登録に失敗した画像があると input/ 由来の並びとずれ、**別フレームのマスクで評価してしまう**。
+    # （2026-09-06 のコード監査で発覚。street f40 は5視点中3視点、crossing f40 は2視点がずれていた。）
+    # よって sparse/0/images.bin の登録名から算出し、無い場合だけ input/ にフォールバックする。
+    names = None
+    img_bin = exp / "sparse" / "0" / "images.bin"
+    if img_bin.exists():
+        try:
+            import sys as _sys
+            _sys.path.insert(0, "/opt/gaussian-splatting")
+            from scene.colmap_loader import read_extrinsics_binary
+            names = sorted(Path(v.name).stem for v in read_extrinsics_binary(str(img_bin)).values())
+        except Exception as e:
+            print(f"[警告] images.bin を読めなかったので input/ から算出します: {e}")
+    if not names:
+        names = sorted(p.stem for p in (exp / "input").glob("*.png"))
     test_names = names[::8]
 
+    splitter = load_wire_bar_splitter(exp)
     rows = []              # PSNR系（従来どおり）
+    split_rows = []        # 電線のみ / フェンス棒（2026-09-06 追加）
     recall_rows = []       # 消失率系（新規）: name, r_gt, r_ren, n_covered_gt, n_covered_ren, n_total
     k = args.mask_dilate
     kernel5 = np.ones((2 * k + 1, 2 * k + 1), np.uint8) if k > 0 else None
@@ -131,6 +188,14 @@ def main():
         m = cv2.dilate(mb.astype(np.uint8), kernel5).astype(bool) if kernel5 is not None else mb
         rows.append((name, psnr(ren, gt), psnr(ren, gt, np.repeat(m[..., None], 3, 2)),
                      psnr(ren, gt, np.repeat(~m[..., None], 3, 2)), m.mean() * 100))
+        if splitter is not None:
+            sp = splitter(name, m)
+            if sp is not None:
+                wmask, bmask = sp
+                split_rows.append((
+                    psnr(ren, gt, np.repeat(wmask[..., None], 3, 2)) if wmask.any() else np.nan,
+                    psnr(ren, gt, np.repeat(bmask[..., None], 3, 2)) if bmask.any() else np.nan,
+                    int(wmask.sum()), int(bmask.sum())))
 
         band = band_from_mask(mb, args.band_radius)
         det_gt = detect_line_map(gt, band, args.canny_lo, args.canny_hi,
@@ -147,6 +212,18 @@ def main():
     arr = np.array([[r[1], r[2], r[3]] for r in rows])
     print(f"{'平均':12s} {arr[:,0].mean():9.2f} {arr[:,1].mean():9.2f} {arr[:,2].mean():9.2f}")
     print(f"\n→ 背景PSNRと細線PSNRの差: {arr[:,2].mean()-arr[:,1].mean():.2f} dB（大きいほど細線だけ壊れている）")
+
+    # ── 電線 / フェンス棒の分離（本命指標は「電線のみ」。§9ab）──
+    wire_only = bar_only = gap_wire = None
+    if split_rows:
+        sa = np.array([[r[0], r[1]] for r in split_rows], dtype=float)
+        wpx = sum(r[2] for r in split_rows); bpx = sum(r[3] for r in split_rows)
+        wire_only = float(np.nanmean(sa[:, 0])); bar_only = float(np.nanmean(sa[:, 1]))
+        gap_wire = float(arr[:, 2].mean() - wire_only)
+        print(f"\n★ 電線のみPSNR: {wire_only:.2f}　フェンス棒PSNR: {bar_only:.2f}"
+              f"（マスク中の電線比 {wpx/max(wpx+bpx,1)*100:.1f}%）")
+        print(f"★ 背景と電線のみの差: {gap_wire:.2f} dB ← **本命指標**"
+              f"（従来の細線PSNRは電線と棒の混合なので過大評価になる）")
 
     # ── 消失率（線検出recall）の集計。視点ごとの画素数で重み付けした全体recallを本命値とする ──
     tot_sum = sum(r[5] for r in recall_rows)
@@ -171,6 +248,7 @@ def main():
                "psnr_all": float(arr[:, 0].mean()), "psnr_wire": float(arr[:, 1].mean()),
                "psnr_bg": float(arr[:, 2].mean()),
                "gap_db": float(arr[:, 2].mean() - arr[:, 1].mean()),
+               "psnr_wireonly": wire_only, "psnr_bar": bar_only, "gap_wireonly_db": gap_wire,
                "psnr_wire_min": float(arr[:, 1].min()), "n_test_views": len(rows),
                "recall_gt": float(recall_gt), "recall_ren": float(recall_ren),
                "recall_norm": float(recall_norm), "disappearance_rate": float(disappearance_rate),

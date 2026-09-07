@@ -49,7 +49,7 @@ args = parser.parse_args()
 
 exp = Path(args.exp)
 rdir = exp / args.model_dir / "test" / f"ours_{args.iteration}"
-names = sorted(p.stem for p in (exp / "input").glob("*.png"))[::8]
+names = test_view_names(exp)
 win = args.win
 
 # 断面ごとの (視点idx, cx, cy, 二乗誤差, 位置補正後誤差) を収集
@@ -172,6 +172,7 @@ print(f"[3] 位置ずれ補正で消える誤差: 全体 {shift_gain_all*100:.0f
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import sys as _sys; _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
 
 ncol = min(5, len(views))
 nrow = (len(views) + ncol - 1) // ncol

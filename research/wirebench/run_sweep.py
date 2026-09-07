@@ -124,7 +124,15 @@ def process(radius, n_frames, variant):
     run([sys.executable, WB / "analyze_sfm.py", "."], log, cwd=exp)
 
     # 4. 3DGS学習
-    if (exp / f"output/point_cloud/iteration_{args.iters}").exists():
+    # 再開ガードは「dirがある」ではなく「plyが最後まで書けている」で判定する。
+    # 電源断で書きかけのplyが残ると、存在チェックだけでは壊れたモデルのまま
+    # render→eval が走り、誤った数値が黙ってCSVに入る（§9s で実害寸前だった）。
+    # 2026-09-06 のコード監査で run_sweep.py 側が未対応だったので check_ply.py を通す。
+    _ply = exp / f"output/point_cloud/iteration_{args.iters}/point_cloud.ply"
+    _ok = _ply.exists() and subprocess.run(
+        [sys.executable, str(WB / "check_ply.py"), str(_ply)],
+        capture_output=True).returncode == 0
+    if _ok:
         print("  4) train: スキップ", flush=True)
     else:
         print("  4) train: 実行", flush=True)

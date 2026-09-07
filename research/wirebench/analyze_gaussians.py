@@ -17,6 +17,7 @@ import numpy as np
 import pycolmap
 from plyfile import PlyData
 from scipy.spatial import cKDTree
+import sys as _sys; _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
 
 
 def fresh(p):
@@ -112,8 +113,7 @@ for name, th in [("3cm", 0.03), ("10cm", 0.10)]:
 # ── 霧診断：テスト視点カメラ前方近傍の「不透明度×断面積」総和 ─────────────────────
 # 断面積の代理として上位2軸の積（πは省略。相対比較用）。fog_massが大きい視点は
 # カメラ前に半透明の大きいガウシアンが溜まっている＝霧の疑い。
-names = sorted(gt["frames"].keys())
-test_names = names[::8]
+test_names = test_view_names(exp)   # 2026-09-06: 登録画像から導出（監査で修正）
 # 霧の指標＝画像中心の視線を近距離で塞ぐ「濃い遮蔽体」の累積アルファ。
 # 各ガウシアンの視線への寄与を α_i = 不透明度 × exp(-perp²/2σ²)（σ=最大軸）で近似し、
 # α_i > 0.3 の濃い遮蔽体だけで 1-Π(1-α_i) を計算する（微小αの大群では飽和しない）。
