@@ -12,7 +12,7 @@ exp,wire_radius_m,frames,variant,layout,fence,wire_px_p50,iters,sfm_points,wire_
 20260705_wb_r15mm_f40_enclosed,0.015,40,enclosed,base,periodic,,7000,16864,0,1.92,31.25,24.65,31.92,7.27,22.21,0.0021,64
 20260705_wb_r15mm_f20_enclosed,0.015,20,enclosed,base,periodic,,7000,3812,0,1.937,22.3,19.13,22.52,3.39,17.12,0.0047,64
 20260726_wb_r15mm_f80_open_Lcrossing,0.015,80,open,crossing,periodic,2.83,7000,26060,8,2.386,32.24,24.52,33.67,9.14,22.44,0.0044,64
-20260726_wb_r15mm_f40_open_Lcrossing,0.015,40,open,crossing,periodic,2.83,7000,6829,0,2.366,23.46,20.59,23.69,3.1,12.89,2.7112,64
+20260726_wb_r15mm_f40_open_Lcrossing_OLDSFM_INVALID,0.015,40,open,crossing,periodic,2.83,7000,6829,0,2.366,23.46,20.59,23.69,3.1,12.89,2.7112,64
 20260726_wb_r15mm_f80_open_Lstreet,0.015,80,open,street,periodic,3.03,7000,29205,0,2.046,34.47,25.76,35.73,9.97,21.31,0.0028,64
-20260726_wb_r15mm_f40_open_Lstreet,0.015,40,open,street,periodic,3.03,7000,8261,0,1.92,30.65,30.83,30.87,0.04,25.27,0.0048,64
-20260726_wb_r15mm_f40_open_Lcrossing,0.015,40,open,crossing,periodic,2.83,7000,6959,1,2.366,22.87,20.33,23.09,2.76,13.63,3.2289,64
+20260726_wb_r15mm_f40_open_Lstreet,0.015,40,open,street,periodic,3.03,7000,8261,0,1.92,30.65,25.86,31.08,5.21,21.53,0.0048,64
+20260726_wb_r15mm_f40_open_Lcrossing,0.015,40,open,crossing,periodic,2.83,7000,6959,1,2.366,22.87,19.48,23.19,3.72,13.63,3.2289,64

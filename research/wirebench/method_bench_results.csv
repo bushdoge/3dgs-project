@@ -5,3 +5,5 @@ exp,method,init,iters,run,psnr_all,psnr_wire,psnr_bg,gap_db,psnr_wire_min,disapp
 20260704_wb_r15mm_f80_open,rain-gs_ours_new,random,30000,1,30.61,24.41,31.53,7.12,16.16,0.0155,0.675
 20260704_wb_r15mm_f80_open,absgs,sfm,7000,1,33.70,23.97,35.36,11.39,18.08,-0.0004,0.983
 20260704_wb_r15mm_f80_open,2dgs,sfm,7000,1,30.42,23.44,31.90,8.46,15.44,0.0036,0.803
+20260704_wb_r15mm_f80_open,sadgs,sfm,7000,1,27.32,23.47,27.78,4.32,17.62,0.0013,0.988
+20260704_wb_r15mm_f80_open,sadgs,sfm,30000,1,30.67,26.04,31.29,5.26,17.73,0.0005,0.988

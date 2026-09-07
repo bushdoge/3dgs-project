@@ -86,3 +86,6 @@ secrets.json
 # Logs
 *.log
 logs/
+
+# 旧スキーマの結果CSVバックアップ（作業中に生まれる一時物）
+*.csv.bak
