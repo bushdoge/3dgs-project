@@ -62,6 +62,7 @@ streamlit run /workspace/streamlit_app.py
 | ページ | 役割 |
 |---|---|
 | ホーム（`90_home.py`） | ToDo・パイプライン進捗の確認 |
+| 作業モニター（`92_jobs.py`） | いま動いているジョブと進捗の一覧（CLIから起動したものも含む） |
 | システムモニター（`91_monitor.py`） | GPU / CPU / メモリのリアルタイム監視 |
 | キュー（`00_batch.py`） | バッチキューの管理・ジョブ実行 |
 | パイプライン（`01_pipeline.py`） | 実験設定をまとめてキューに追加（標準の入口） |
@@ -205,6 +206,20 @@ SAM2（SAM 2.1 Hiera-Large）で撮影者をマスクします。
 
 ### `batch_daemon.py`
 バッチキューを監視してジョブを順次実行するデーモン。Streamlit を開いていなくても動き続けます。`nohup python3 scripts/batch_daemon.py &` またはキューページの起動ボタンから開始します。
+
+### `job_monitor.py`
+実行中ジョブの自動検出と進捗解析。`/proc` を走査して学習・COLMAP・レンダリング・Blender などの
+プロセスを種別ごとに同定し、`/proc/<pid>/fd/1` から標準出力のリダイレクト先を逆引きしてログを解析する。
+GUI やバッチデーモンを経由せず `nohup ... > tmp/x.log &` で起動したジョブも拾えるのが `pipeline_widget.py`
+との違い。作業モニターページ（`92_jobs.py`）が使う。単体でも動く。
+
+```bash
+python3 /workspace/job_monitor.py     # 実行中ジョブ・工程表・直近の終了ジョブを端末に出力
+```
+
+シェルスクリプトから複数ジョブを順番に流す場合、`tmp/<名前>_status.txt` に
+`[工程名] start <日時>` / `[工程名] exit=<終了コード> <日時>` の形式で追記しておくと、
+作業モニターがそれを工程表として表示する（最後に `ALL DONE` を書けば全完了扱い）。
 
 ---
 

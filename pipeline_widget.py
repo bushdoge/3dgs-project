@@ -545,47 +545,60 @@ def render_sticky_footer():
 
     st.markdown(f"""
 <style>
+  /* Material 3 Expressive: 面は surfaceContainer、形は pill、動きはバネ。
+     色トークンは streamlit_app.py の :root で定義（未読込時のフォールバック値を第2引数に置く）*/
   #pipeline-sticky-footer {{
     position: fixed; bottom: 0; left: 0; right: 0;
-    background: rgba(8, 12, 22, 0.96);
-    border-top: 1px solid #1a3a5c;
-    padding: 5px 20px;
+    background: color-mix(in srgb, var(--m3-surface-c, #1E232B) 92%, transparent);
+    border-top: 1px solid var(--m3-outline-var, #4B443C);
+    padding: 8px 20px;
     z-index: 99999;
     display: flex; align-items: center; gap: 14px;
-    backdrop-filter: blur(6px);
-    font-family: 'Share Tech Mono', monospace;
+    backdrop-filter: blur(12px);
+    font-family: 'Roboto Flex','Noto Sans JP','Hiragino Sans',system-ui,sans-serif;
   }}
   #pipeline-sticky-footer .psf-dot {{
-    width: 6px; height: 6px; border-radius: 50%;
-    background: #00e5ff; box-shadow: 0 0 6px #00e5ff;
-    animation: psf-pulse 1.5s infinite; flex-shrink: 0;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--m3-primary, #FFB59B);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--m3-primary, #FFB59B) 60%, transparent);
+    animation: psf-pulse 1.8s cubic-bezier(.34,1.56,.64,1) infinite; flex-shrink: 0;
   }}
-  @keyframes psf-pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
+  /* Expressive のバネ的な脈動（不透明度だけでなくリングが広がる）*/
+  @keyframes psf-pulse {{
+    0%   {{ box-shadow: 0 0 0 0 color-mix(in srgb, var(--m3-primary, #FFB59B) 55%, transparent); }}
+    70%  {{ box-shadow: 0 0 0 7px transparent; }}
+    100% {{ box-shadow: 0 0 0 0 transparent; }}
+  }}
   #pipeline-sticky-footer .psf-scene {{
-    font-size: 0.7rem; color: #00aaff; white-space: nowrap; flex-shrink: 0;
+    font-size: 0.78rem; font-weight: 600; color: var(--m3-on-surface, #EAE6DC);
+    white-space: nowrap; flex-shrink: 0;
   }}
   #pipeline-sticky-footer .psf-step {{
-    font-size: 0.68rem; color: #4a90b8; white-space: nowrap; flex-shrink: 0;
+    font-size: 0.72rem; white-space: nowrap; flex-shrink: 0;
+    color: var(--m3-on-secondary-container, #FFDBCF);
+    background: var(--m3-secondary-container, #5D4033);
+    padding: 2px 12px; border-radius: 999px;   /* M3 のアシストチップ */
   }}
   #pipeline-sticky-footer .psf-bar-wrap {{
-    flex: 1; height: 3px; background: #0a1520; border-radius: 2px;
-    overflow: hidden; min-width: 60px;
+    flex: 1; height: 8px; background: var(--m3-surface-high, #282D35);
+    border-radius: 999px; overflow: hidden; min-width: 60px;
   }}
   #pipeline-sticky-footer .psf-bar {{
-    height: 100%; border-radius: 2px;
-    background: linear-gradient(90deg, #0055bb, #00e5ff);
-    box-shadow: 0 0 5px #00e5ff55;
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--m3-primary, #FFB59B), var(--m3-tertiary, #EFC77A));
     width: {pct_val:.1f}%;
+    transition: width .5s cubic-bezier(.22,1.2,.36,1);
   }}
   #pipeline-sticky-footer .psf-pct {{
-    font-size: 0.7rem; color: #00e5ff; white-space: nowrap; flex-shrink: 0;
+    font-size: 0.78rem; font-weight: 700; color: var(--m3-on-surface, #EAE6DC);
+    white-space: nowrap; flex-shrink: 0;
   }}
   #pipeline-sticky-footer .psf-detail {{
-    font-size: 0.65rem; color: #2a6080; white-space: nowrap;
+    font-size: 0.7rem; color: var(--m3-on-surface-var, #CFC7BC); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; max-width: 300px;
   }}
   /* フッターと重ならないようにコンテンツ下余白を確保 */
-  .block-container {{ padding-bottom: 2.5rem !important; }}
+  .block-container {{ padding-bottom: 3.2rem !important; }}
 </style>
 <div id="pipeline-sticky-footer">
   <div class="psf-dot"></div>

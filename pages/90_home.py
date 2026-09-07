@@ -50,22 +50,35 @@ def save_todos(todos):
 # ── ヘッダー（ガウスくん）─────────────────────────────────────────────────────
 st.markdown("""
 <style>
-.gauss-hero { display:flex; align-items:center; gap:18px; margin-bottom:1.0rem; }
-.gauss-chan { position:relative; width:72px; height:62px; flex:none;
-  background: radial-gradient(circle at 35% 32%, #ffd166, #ff8552 72%);
+/* M3 Expressive: ヒーローは「広い色面」で置く。Expressive の最大の特徴は
+   小さなアクセントではなく tonal container を大きな面積で使うこと。         */
+.gauss-hero {
+  display:flex; align-items:center; gap:24px;
+  background:linear-gradient(115deg, var(--m3-primary-container,#8E3A17) 0%,
+                                     var(--m3-tertiary-container,#5C4300) 100%);
+  border-radius: 36px 36px 36px 12px;      /* 非対称の角＝Expressive のシェイプ */
+  padding: 1.6rem 2rem; margin-bottom:1.6rem;
+  box-shadow: 0 6px 16px 4px rgba(0,0,0,.28);
+}
+/* マスコット: Expressive の「有機的な形」。バネで上下し、触ると形が変わる */
+.gauss-chan { position:relative; width:84px; height:72px; flex:none;
+  background: radial-gradient(circle at 35% 32%, #FFDFA6, var(--m3-primary,#FFB59B) 72%);
   border-radius: 58% 42% 55% 45% / 55% 48% 52% 45%;
-  animation: gauss-bob 3.2s ease-in-out infinite;
-  box-shadow: 0 6px 18px rgba(255,133,82,.32); }
-.gauss-chan::before, .gauss-chan::after { content:""; position:absolute; top:25px;
-  width:7px; height:11px; background:#26150c; border-radius:50%;
+  animation: gauss-bob 3.4s cubic-bezier(.34,1.56,.64,1) infinite;
+  box-shadow: 0 8px 20px rgba(0,0,0,.3);
+  transition: border-radius .55s cubic-bezier(.34,1.56,.64,1), transform .55s cubic-bezier(.34,1.56,.64,1); }
+.gauss-chan:hover { border-radius: 42% 58% 45% 55% / 48% 55% 45% 52%; transform:scale(1.08) rotate(6deg); }
+.gauss-chan::before, .gauss-chan::after { content:""; position:absolute; top:30px;
+  width:8px; height:12px; background:var(--m3-on-primary,#5B1B00); border-radius:50%;
   animation: gauss-blink 4.5s infinite; }
-.gauss-chan::before { left:23px; } .gauss-chan::after { left:43px; }
-@keyframes gauss-bob { 0%,100%{ transform:translateY(0) rotate(-2deg);} 50%{ transform:translateY(-6px) rotate(2deg);} }
+.gauss-chan::before { left:28px; } .gauss-chan::after { left:50px; }
+@keyframes gauss-bob { 0%,100%{ transform:translateY(0) rotate(-2deg);} 50%{ transform:translateY(-8px) rotate(2deg);} }
 @keyframes gauss-blink { 0%,92%,100%{ transform:scaleY(1);} 95%{ transform:scaleY(.1);} }
-.gauss-title { font-size:1.85rem; font-weight:800; letter-spacing:.1em; line-height:1.15;
-  background: linear-gradient(90deg, #ff8552, #ffd166 55%, #7ee8b2);
-  -webkit-background-clip: text; background-clip: text; color: transparent; }
-.gauss-sub { font-size:.72rem; color:#8fa3b8; letter-spacing:.2em; margin-top:.1rem; }
+/* display スタイル: 大きく・重く・字間を締める（M3 Expressive のタイポの落差）*/
+.gauss-title { font-size:3rem; font-weight:900; letter-spacing:-.035em; line-height:1;
+  color:var(--m3-on-primary-container,#FFDBCF); }
+.gauss-sub { font-size:.72rem; font-weight:600; letter-spacing:.24em; margin-top:.5rem;
+  color:color-mix(in srgb, var(--m3-on-primary-container,#FFDBCF) 78%, transparent); }
 </style>
 """, unsafe_allow_html=True)
 

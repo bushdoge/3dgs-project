@@ -1,15 +1,75 @@
-# Streamlit テーマ設定（全ページ共通）
-# 「黒+水色」のAI定番配色をやめ、温かみのあるインクブルー×コーラルに。
-# アクセント候補: コーラル#ff8552 / ミント#7ee8b2 / ゴールド#ffd166 / スカイ#8ab8e8 / ラベンダー#b7a5ff
+# Streamlit テーマ設定（全ページ共通）— Material 3 Expressive
+#
+# 方針: Streamlit 1.56 のテーマAPIで表現できるものはCSSハックではなくAPIで指定する。
+#       （第1版はCSSで上書きしようとして font 指定に負けていた／存在しないtestidを狙っていた）
+# 色ロール（M3ダークスキーム・seed=コーラル）:
+#   primary #FFB59B / onPrimary #5B1B00 / primaryContainer #8E3A17 / onPrimaryContainer #FFDBCF
+#   secondary #E7BDAC / secondaryContainer #5D4033 / tertiary #EFC77A / tertiaryContainer #5C4300
+#   surface #14181F / surfaceContainer #1E232B / onSurface #EAE6DC / outlineVariant #4B443C
+# 形・動き・状態レイヤは streamlit_app.py の共通CSS。
+# 元の意匠に戻す: bash tmp/ui_restore_20260903_0330.sh
 
 [theme]
 base = "dark"
-primaryColor = "#ff8552"             # コーラル: ボタン・スライダー・フォーカス
-backgroundColor = "#151a24"          # インクブルー（真っ黒より柔らかい）
-secondaryBackgroundColor = "#1f2733" # サイドバー・入力欄・カード
-textColor = "#eae6dc"                # 温かいオフホワイト（青白より目に優しい）
-linkColor = "#8ab8e8"
-font = "sans serif"
+primaryColor = "#FFB59B"
+backgroundColor = "#14181F"
+secondaryBackgroundColor = "#1E232B"
+textColor = "#EAE6DC"
+linkColor = "#EFC77A"
+linkUnderline = false
+
+# ── タイポグラフィ ────────────────────────────────────────────────────────────
+# M3 Expressive の一番の特徴は「display と body の落差」。見出しを大きく・重くする。
+font = "Roboto Flex, Noto Sans JP, Hiragino Sans, system-ui, sans-serif"
+headingFont = "Roboto Flex, Noto Sans JP, Hiragino Sans, system-ui, sans-serif"
+headingFontSizes = ["2.7rem", "1.95rem", "1.45rem", "1.2rem", "1.05rem", "0.95rem"]
+headingFontWeights = [800, 700, 650, 600, 600, 600]
+baseFontWeight = 400
+metricValueFontSize = "2.3rem"
+metricValueFontWeight = 700
+codeFont = "Roboto Mono, ui-monospace, SFMono-Regular, monospace"
+
+# ── 形 ────────────────────────────────────────────────────────────────────────
+baseRadius = "1.25rem"      # Expressive は面を大きく丸める
+buttonRadius = "full"       # ボタンは pill（M3の標準形）
+showWidgetBorder = false    # filled スタイル（枠線ではなく面で区切る）
+showSidebarBorder = false
+
+# ── 意味色 = M3 の tonal container ペア ───────────────────────────────────────
+# st.success / info / warning / error / badge がこれを使う。
+greenColor = "#8ED9A8"
+greenBackgroundColor = "#22503A"
+greenTextColor = "#B8F2CE"
+blueColor = "#A8C7FA"
+blueBackgroundColor = "#2E4A63"
+blueTextColor = "#CDE5FF"
+yellowColor = "#EFC77A"
+yellowBackgroundColor = "#5C4300"
+yellowTextColor = "#FFDFA6"
+orangeColor = "#FFB59B"
+orangeBackgroundColor = "#8E3A17"
+orangeTextColor = "#FFDBCF"
+redColor = "#FFB4AB"
+redBackgroundColor = "#93000A"
+redTextColor = "#FFDAD6"
+violetColor = "#CFBCFF"
+violetBackgroundColor = "#3F3153"
+violetTextColor = "#E9DDFF"
+grayColor = "#9E948A"
+grayBackgroundColor = "#282D35"
+grayTextColor = "#CFC7BC"
+
+dataframeHeaderBackgroundColor = "#282D35"
+dataframeBorderColor = "#4B443C"
+chartCategoricalColors = ["#FFB59B", "#EFC77A", "#8ED9A8", "#A8C7FA", "#CFBCFF", "#E7BDAC"]
+
+[theme.sidebar]
+backgroundColor = "#1A1F26"
+secondaryBackgroundColor = "#282D35"
+borderColor = "#4B443C"
+baseRadius = "1.25rem"
+buttonRadius = "full"
+showWidgetBorder = false
 
 [server]
 port = 8501
