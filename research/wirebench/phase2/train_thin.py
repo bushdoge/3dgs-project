@@ -124,6 +124,14 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
+    # チェックポイント復帰（GPU消失・中断からの再開用）。filter_3D は capture に含まれないが
+    # xyz/scale とカメラから決まるので、下の compute_3D_filter で復元される。
+    first_iter = 0
+    if args.start_checkpoint:
+        model_params, first_iter = torch.load(args.start_checkpoint)
+        gaussians.restore(model_params, opt)
+        print(f"[thin] チェックポイントから再開: {args.start_checkpoint} (iter {first_iter})")
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -134,6 +142,15 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
                      else trainCameras)
     if n_ss > 1:
         print(f"[thin] スーパーサンプル教師 ×{n_ss}（3Dフィルタ: {args.ss_filter}={'N×' if args.ss_filter=='ss' else '1×'}カメラ）")
+    if args.no_3d_filter:
+        # アブレーション: Mipの「3Dスムージングフィルタ」だけを無効化する。
+        # filter_3D は scales に二乗和で足される（gaussian_model.py）ので、恒久的に0にすれば
+        # 3Dフィルタ無しになる。densification でNが変わるたび呼ばれるので、その都度0で作り直す。
+        # 2Dフィルタ側は --kernel_size 0 で切れるので、2つを独立に切り分けられる。
+        def _zero_3d_filter(cameras=None, _g=gaussians):
+            _g.filter_3D = torch.zeros((_g.get_xyz.shape[0], 1), device="cuda")
+        gaussians.compute_3D_filter = _zero_3d_filter
+        print("[thin] アブレーション: 3Dスムージングフィルタを無効化")
     gaussians.compute_3D_filter(cameras=filterCameras)
 
     wire_masks = None
@@ -161,8 +178,8 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(0, opt.iterations), desc="Training progress")
-    for iteration in range(1, opt.iterations + 1):
+    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    for iteration in range(first_iter + 1, opt.iterations + 1):
         gaussians.update_learning_rate(iteration)
 
         if iteration % 1000 == 0:
@@ -239,6 +256,17 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
             if iteration in saving_iterations:
                 print("\n[ITER {}] Saving Gaussians (n={})".format(iteration, gaussians.get_xyz.shape[0]))
                 scene.save(iteration)
+            save_ckpt = iteration in args.checkpoint_iterations
+            rolling = (args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0
+                       and iteration != opt.iterations)
+            if save_ckpt or rolling:
+                # rolling は最新1つだけを chkpnt_latest.pth に上書き保存する（tmp→renameで原子的）。
+                # 途中で落ちても --start_checkpoint で再開できる。
+                name = f"chkpnt{iteration}.pth" if save_ckpt else "chkpnt_latest.pth"
+                dst = os.path.join(scene.model_path, name)
+                torch.save((gaussians.capture(), iteration), dst + ".tmp")
+                os.replace(dst + ".tmp", dst)
+                print(f"\n[ITER {iteration}] Saving checkpoint -> {name}")
 
             # Densification（本家と同一）
             if iteration < opt.densify_until_iter:
@@ -302,6 +330,12 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000])
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[],
+                        help="このiterでチェックポイントを chkpnt<iter>.pth に保存する（本家3DGS互換）")
+    parser.add_argument("--checkpoint_every", type=int, default=0,
+                        help="N iterごとに chkpnt_latest.pth を上書き保存する（GPU消失対策。0で無効）")
+    parser.add_argument("--start_checkpoint", type=str, default=None,
+                        help="チェックポイントから学習を再開する")
     parser.add_argument("--wire_mask_dir", type=str, default="gt/mask_thin")
     parser.add_argument("--wire_weight", type=float, default=1.0)
     parser.add_argument("--adaptive_gamma", type=float, default=0.0)
@@ -312,6 +346,8 @@ if __name__ == "__main__":
     parser.add_argument("--ss_filter", choices=["ss", "base"], default="ss")
     parser.add_argument("--centroid_weight", type=float, default=0.0)
     parser.add_argument("--near_prune", type=float, default=0.0)
+    parser.add_argument("--no_3d_filter", action="store_true",
+                        help="アブレーション: Mipの3Dスムージングフィルタを無効化する")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
