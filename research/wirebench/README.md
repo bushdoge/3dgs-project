@@ -9,7 +9,7 @@
 |---|---|
 | `make_scene.py` | Blenderで合成シーン（電線3本・フェンス・電柱・建物）を構築し、周回視点の学習画像＋GT一式をレンダリング。`--wire-radius`（電線半径m）、`--frames`（視点数）、`--enclosed`（空なし統制版）、`--layout`／`--fence`（下記「シーン構造の切り替え」）で条件を統制 |
 | `scene_stats.py` | GT深度EXRとGT細線マスクからシーンの見え方を定量（空占有率・**細線背後の空率**・細線画素占有率）。シーン間で背景の性質を揃える/変えるときの検算に使う。要 OpenEXR |
-| `analyze_sfm.py` | COLMAP点群をGT座標にUmeyama位置合わせし、細線上のSfM点の欠乏を定量。厳密版=電線スパンの**表面**から3cm以内（中心線距離−線半径で判定。半径はgt/scene_params.jsonから自動取得） |
+| `analyze_sfm.py` | COLMAP点群をGT座標にUmeyama位置合わせし、細線上のSfM点の欠乏を定量。厳密版=電線スパンの**表面**から3cm以内（**中心線ポリラインへの線分距離**−線半径で判定。半径はgt/scene_params.jsonから自動取得）。欠乏倍率は**電線スパンのみで分子分母を揃えた**主指標と旧互換の混合指標を両方出す（§9ah）。**点が0個のときは倍率を下界（≧N倍）として報告する** |
 | `eval_wires.py` | 学習済み3DGSのテストレンダを 全体/細線領域/背景 PSNR に分解して評価し、比較図を出力。加えて2D線検出（Canny→HoughLinesP）ベースの**消失率**（GT細線recallに対するレンダrecallの正規化欠損）を算出し診断図を出力 |
 | `inject_points.py` | オラクル点注入（キラー実験）：GTの電線中心線点をUmeyama逆変換でCOLMAP点群に追加し `<dst>/sparse/0` を書き出す。dstにはinput/gt/imagesを用意しておく |
 | `run_sweep.py` | 上記＋COLMAP＋学習＋レンダを条件グリッドで一括実行するオーケストレータ。結果は `sweep_results.csv` に1行/条件で追記 |

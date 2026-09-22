@@ -95,8 +95,11 @@ def covered_fraction(det_map, mask_bool, tau):
     return n_covered / total, n_covered, total
 
 
-def load_wire_bar_splitter(exp):
+def load_wire_bar_splitter(exp, labels=None):
     """細線マスクを『電線』と『フェンス棒』に分ける関数を返す。GTが無ければ None。
+
+    labels を渡すと wire_points.npz のラベルの代わりにそれを使う（1類/2類の定義を
+    呼び出し側で差し替えられる。analyze_sfm.py が「電線スパン部のみ」を1類にするのに使う）。
 
     細線マスク（pass_index=1）には電線とフェンス縦棒の両方が入る。棒の半径は固定で
     電線だけが --wire_radius で変わるため、太さスイープでマスクの構成比が大きく変わり、
@@ -109,6 +112,9 @@ def load_wire_bar_splitter(exp):
         poses = _json.load(open(exp / "gt" / "poses.json"))
         d = np.load(exp / "gt" / "wire_points.npz")
         P, LB = d["points"], d["labels"]
+        if labels is not None:
+            LB = np.asarray(labels)
+            assert LB.shape[0] == P.shape[0], "labels の長さが wire_points と合わない"
     except Exception:
         return None
 
