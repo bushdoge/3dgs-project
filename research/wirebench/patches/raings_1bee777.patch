@@ -1,0 +1,17 @@
+# RAIN-GS（https://github.com/KU-CVLAB/RAIN-GS、コミット 1bee777）に当てた wirebench 用パッチ。
+# 研究メモ §9k（手法横断ベンチ）。tools/ は git 管理外なので、ここに差分として残す。
+#   scene/dataset_readers.py: args_dict が None のとき（--train_from 未指定の経路）に TypeError で落ちるのを防ぐガード。
+# 当て方: cd tools/rain-gs && git checkout 1bee777 && git apply /workspace/research/wirebench/patches/raings_1bee777.patch
+diff --git a/scene/dataset_readers.py b/scene/dataset_readers.py
+index e8a2159..f779262 100755
+--- a/scene/dataset_readers.py
++++ b/scene/dataset_readers.py
+@@ -156,7 +156,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, args_dict=None):
+     except:
+         pcd = None
+         
+-    if args_dict['train_from'] == "noisy_sfm":
++    if (args_dict is not None) and args_dict['train_from'] == "noisy_sfm":
+         print(f"Adding noise to the point cloud (1.0)...")
+         xyz += np.random.normal(0, 1.0, xyz.shape)
+         rgb += np.random.normal(0, 1.0, rgb.shape)

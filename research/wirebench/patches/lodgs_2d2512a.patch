@@ -1,0 +1,50 @@
+# LOD-GS（https://github.com/Huster-YZY/LOD-GS、コミット 2d2512a "add render"）に当てた wirebench 用パッチ。
+# 研究メモ §9af。tools/ は git 管理外なので、ここに差分として残す。
+#   1. utils/camera_utils.py: 公開コードは実質マルチスケール専用で、単一スケール（--resolution -1）だと
+#      "Camera object is not iterable" で落ちる。他手法と同一条件（ネイティブ解像度・単一スケール）で比べるため両対応にした。
+#   2. scene/gaussian_model.py: capture()/restore() に LOD-GS 固有の学習パラメータ _coefs が入っておらず、
+#      チェックポイントから再開すると形状不一致で落ちる。両方に _coefs を追加した（旧形式のチェックポイントとは非互換）。
+# 当て方: cd tools/LOD-GS && git checkout 2d2512a && git apply /workspace/research/wirebench/patches/lodgs_2d2512a.patch
+diff --git a/scene/gaussian_model.py b/scene/gaussian_model.py
+index d4cdeea..79bdf24 100644
+--- a/scene/gaussian_model.py
++++ b/scene/gaussian_model.py
+@@ -81,6 +81,7 @@ class GaussianModel:
+             self.denom,
+             self.optimizer.state_dict(),
+             self.spatial_lr_scale,
++            self._coefs,          # LOD-GS 固有: これが無いと再開時に形状不一致で落ちる
+         )
+     
+     def restore(self, model_args, training_args):
+@@ -95,8 +96,9 @@ class GaussianModel:
+         xyz_gradient_accum, 
+         denom,
+         opt_dict, 
+-        self.spatial_lr_scale) = model_args
+-        self.training_setup(training_args)
++        self.spatial_lr_scale,
++        self._coefs) = model_args
++        self.training_setup(training_args)   # _coefs を含めた後に optimizer を組む
+         self.xyz_gradient_accum = xyz_gradient_accum
+         self.denom = denom
+         self.optimizer.load_state_dict(opt_dict)
+diff --git a/utils/camera_utils.py b/utils/camera_utils.py
+index ff9c079..6e66bd6 100644
+--- a/utils/camera_utils.py
++++ b/utils/camera_utils.py
+@@ -82,7 +82,13 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args, is_nerf_syntheti
+         if is_nerf_synthetic:
+             camera_list.append(loadCam(args, id, c, resolution_scale, is_nerf_synthetic, is_test_dataset))
+         else:
+-            camera_list += loadCam(args, id, c, resolution_scale, is_nerf_synthetic, is_test_dataset)
++            # 2026-09-06 パッチ（wirebench）：loadCam は args.resolution>0 のとき
++            # マルチスケール（1/8・1/16・1/32 ハードコード）のリストを返し、
++            # それ以外は単一の Camera を返す。COLMAP経路が `+=` 固定なので
++            # 単一スケール（--resolution -1）だと 'Camera' object is not iterable で落ちる。
++            # 他手法と同一条件（ネイティブ解像度・単一スケール）で比較したいので両対応にする。
++            _c = loadCam(args, id, c, resolution_scale, is_nerf_synthetic, is_test_dataset)
++            camera_list += _c if isinstance(_c, list) else [_c]
+ 
+     return camera_list
+ 

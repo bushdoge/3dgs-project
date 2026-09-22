@@ -28,6 +28,7 @@
 | `error_budget.py` | 残差の誤差収支：細線マスク内の二乗誤差を 輝度/色・位置ずれ/形状・裾集中度 に分解する |
 | `tail_map.py` | 裾の空間分布診断：誤差上位断面がどの視点・線上のどこに集中するかを可視化（視点別シェア・隣接クラスタリング率・GT重畳ヒートマップ）。出力は `$EXP/gt/tail_map_<model>_<iter>.{json,png}` |
 | `phase2/` | Phase 2（AA前提の細線特化最適化）のコード。`train_thin.py`（mip-splatting改の学習: L1画素重み3方式＋視点適応サンプリング。tools/mip-splatting へコピーして venv 実行）・`tail_corr3d.py`（裾の3D対応診断。要 OpenEXR）・`collect_wave1.py`＋`phase2_wave1_results.csv`（第1波の集計） |
+| `patches/` | `tools/` の他手法（git管理外）に当てた修正の差分。**比較実験を再現するには当てる必要がある**。`lodgs_2d2512a.patch`（LOD-GS：単一スケール対応＋チェックポイントに `_coefs` を含める。§9af）・`raings_1bee777.patch`（RAIN-GS：`args_dict` が None のときのガード。§9k）。各ファイル冒頭に元コミットと当て方を記載 |
 | `figs/` | スイープ結果・消失率の図 |
 
 ## シーン構造の切り替え（複数シーン検証）
