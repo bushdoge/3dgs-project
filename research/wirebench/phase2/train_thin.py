@@ -256,18 +256,6 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
             if iteration in saving_iterations:
                 print("\n[ITER {}] Saving Gaussians (n={})".format(iteration, gaussians.get_xyz.shape[0]))
                 scene.save(iteration)
-            save_ckpt = iteration in args.checkpoint_iterations
-            rolling = (args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0
-                       and iteration != opt.iterations)
-            if save_ckpt or rolling:
-                # rolling は最新1つだけを chkpnt_latest.pth に上書き保存する（tmp→renameで原子的）。
-                # 途中で落ちても --start_checkpoint で再開できる。
-                name = f"chkpnt{iteration}.pth" if save_ckpt else "chkpnt_latest.pth"
-                dst = os.path.join(scene.model_path, name)
-                torch.save((gaussians.capture(), iteration), dst + ".tmp")
-                os.replace(dst + ".tmp", dst)
-                print(f"\n[ITER {iteration}] Saving checkpoint -> {name}")
-
             # Densification（本家と同一）
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility_filter] = torch.max(
@@ -297,6 +285,20 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)
+
+            # チェックポイントは本家と同じく densification・prune・optimizer.step の**後**に保存する
+            # （2026-09-24 監査 R-08：以前は前に保存しており、再開するとその iter の densify と更新が1回抜けていた）。
+            save_ckpt = iteration in args.checkpoint_iterations
+            rolling = (args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0
+                       and iteration != opt.iterations)
+            if save_ckpt or rolling:
+                # rolling は最新1つだけを chkpnt_latest.pth に上書き保存する（tmp→renameで原子的）。
+                # 途中で落ちても --start_checkpoint で再開できる。
+                name = f"chkpnt{iteration}.pth" if save_ckpt else "chkpnt_latest.pth"
+                dst = os.path.join(scene.model_path, name)
+                torch.save((gaussians.capture(), iteration), dst + ".tmp")
+                os.replace(dst + ".tmp", dst)
+                print(f"\n[ITER {iteration}] Saving checkpoint -> {name}")
 
 
 def prepare_output_and_logger(args):
