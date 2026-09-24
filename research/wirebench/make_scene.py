@@ -40,7 +40,8 @@ parser.add_argument("--res", type=int, nargs=2, default=[1024, 768])
 parser.add_argument("--test-one", action="store_true", help="1フレームだけレンダして終了（動作確認用）")
 parser.add_argument("--enclosed", action="store_true",
                     help="シーンをテクスチャ付き円筒壁+天井で囲い、無限遠の空を排除する"
-                         "（空フローター交絡の統制版。他の要素はすべて同一）")
+                         "（空フローター交絡の統制版）。**照明も変わる**：太陽光と空の環境光が遮られ、"
+                         "代わりに天井付近に面光源4灯（各1500W）を置く。ジオメトリ・カメラは同一（監査R-12）")
 parser.add_argument("--wire-radius", type=float, default=0.015,
                     help="電線の半径[m]（スイープ用の統制変数。デフォルト0.015≒距離9mで3px幅。"
                          "フェンス棒は統制のため固定）")
@@ -50,6 +51,17 @@ parser.add_argument("--fence", default="periodic", choices=["periodic", "random"
                     help="柵の縦棒の並び（periodic=等間隔・従来 / random=ランダム間隔。"
                          "SfM点欠乏が周期構造由来かを単独で検定するための直交フラグ）")
 parser.add_argument("--fence-seed", type=int, default=0, help="--fence random の乱数種（再現用）")
+# ── GT画像の画像形成（2026-09-24 監査R-03/R-16）。既定は従来と完全に同一（64spp＋デノイズ・BH1.5px・seed0固定）──
+parser.add_argument("--no-denoise", action="store_true",
+                    help="デノイザを切る。既定の64spp＋OIDNは細線部に視点ごとに独立な誤差（約35dB）を残すので、"
+                         "GT品質が問題になる実験では --no-denoise --samples 1024 以上を使う")
+parser.add_argument("--pixel-filter", default=None, choices=["BLACKMAN_HARRIS", "GAUSSIAN", "BOX"],
+                    help="Cycles のピクセルフィルタ（既定: Blender既定の BLACKMAN_HARRIS）")
+parser.add_argument("--filter-width", type=float, default=None,
+                    help="ピクセルフィルタ幅[px]（既定: Blender既定の1.5）。AAの利得がGTの画像形成に依存するかの検定用")
+parser.add_argument("--cycles-seed", type=int, default=None, help="Cycles のサンプリング乱数種（既定0）")
+parser.add_argument("--animated-seed", action="store_true",
+                    help="フレームごとにノイズパターンを変える（既定は全フレーム同一パターン）")
 args = parser.parse_args(argv)
 
 OUT = Path(args.out)
@@ -64,7 +76,15 @@ scene.render.engine = "CYCLES"
 scene.render.resolution_x, scene.render.resolution_y = args.res
 scene.render.image_settings.file_format = "PNG"
 scene.cycles.samples = args.samples
-scene.cycles.use_denoising = True
+scene.cycles.use_denoising = not args.no_denoise
+if args.pixel_filter:
+    scene.cycles.pixel_filter_type = args.pixel_filter
+if args.filter_width is not None:
+    scene.cycles.filter_width = args.filter_width
+if args.cycles_seed is not None:
+    scene.cycles.seed = args.cycles_seed
+if args.animated_seed:
+    scene.cycles.use_animated_seed = True
 # デフォルトのAgXは彩度・コントラストを潰しSfMに不利、Standardは白飛びするためFilmicを使う
 scene.view_settings.view_transform = "Filmic"
 
@@ -380,7 +400,10 @@ json.dump({"wire_radius": WIRE_R, "bar_radius": BAR_R, "frames": args.frames,
            "res": args.res, "pole_positions": [[px, py] for px, py, _ in poles],
            "layout": args.layout, "fence": args.fence, "fence_seed": args.fence_seed,
            "traj": "circle", "n_wires": sum(1 for _, _, _, l in thin_points if l == 1) // N_SAMP,
-           "n_bars": len(bar_xs), "wire_width_px": width_px},
+           "n_bars": len(bar_xs), "wire_width_px": width_px,
+           "denoise": bool(scene.cycles.use_denoising),
+           "pixel_filter": scene.cycles.pixel_filter_type, "filter_width": float(scene.cycles.filter_width),
+           "cycles_seed": int(scene.cycles.seed), "animated_seed": bool(scene.cycles.use_animated_seed)},
           open(OUT / "gt" / "scene_params.json", "w"), indent=1)
 print(f"[wirebench] layout={args.layout} fence={args.fence} "
       f"電線幅[px] p05/p50/p95 = {width_px.get('p05')}/{width_px.get('p50')}/{width_px.get('p95')}")
