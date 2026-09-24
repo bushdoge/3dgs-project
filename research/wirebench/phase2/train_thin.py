@@ -10,14 +10,21 @@
 #                                                   GT(1×)とロス。ss_filter=ss なら3DフィルタもN×カメラで計算
 #   --centroid_weight L                           … P2-4c オラクル: 細線断面のソフト重心差|Δc|をロスに加算
 #                                                   （位置ずれへの直接介入＝上界診断。設計図 roadmap §3.2）
-#   --near_prune D                                … P2-5 疎視点安定化: 学習カメラ中心からD[m]以内の
-#                                                   ガウシアンを500iterごとに削除（空フローター対策。§9h・roadmap§4）
+#   --near_prune D                                … P2-5 疎視点安定化: 学習カメラ中心から D 以内の
+#                                                   ガウシアンを500iterごとに削除（空フローター対策。§9h・roadmap§4）。
+#                                                   **D は COLMAP 座標の単位でメートルではない**（合成シーンでは
+#                                                   1単位≈2.3m、実データは不定。監査R-11）
+#   --near_prune_rel K                            … 同上だが半径を K × scene.cameras_extent（3DGS のシーン半径＝
+#                                                   カメラ中心の広がりの1.1倍）で決める。尺度不変なのでシーン間・
+#                                                   合成↔実データで同じ K が同じ意味になる。合成の --near_prune 1.0 は
+#                                                   K≈0.24（f40/f80 とも）、railside の 1.0 は K≈0.16
 # 実行は tools/mip-splatting へコピーして venv で:
 #   cp research/wirebench/phase2/train_thin.py /workspace/tools/mip-splatting/
 #   cd /workspace/tools/mip-splatting && venv/bin/python train_thin.py -s <exp> -m <exp>/output_mip_ss2_f2x \
 #       --eval --iterations 7000 --supersample 2 --ss_filter ss
 
 import os
+import json
 import numpy as np
 import cv2
 import torch
@@ -158,9 +165,17 @@ def training(dataset, opt, pipe, args, testing_iterations, saving_iterations):
         wire_masks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
         print(f"[thin] オラクルマスク重み w={args.wire_weight}（{len(wire_masks)}視点）")
     cam_centers = None
+    if args.near_prune_rel > 0:
+        assert args.near_prune == 0, "--near_prune と --near_prune_rel は同時に指定しない"
+        args.near_prune = args.near_prune_rel * scene.cameras_extent
+        print(f"[thin] near_prune_rel {args.near_prune_rel} × cameras_extent {scene.cameras_extent:.3f} "
+              f"= 半径 {args.near_prune:.3f}（COLMAP単位）")
+        with open(os.path.join(scene.model_path, "near_prune.json"), "w") as f:
+            json.dump({"near_prune_rel": args.near_prune_rel, "cameras_extent": float(scene.cameras_extent),
+                       "radius_colmap_units": float(args.near_prune)}, f, indent=1)
     if args.near_prune > 0:
         cam_centers = torch.stack([c.camera_center for c in trainCameras]).cuda()
-        print(f"[thin] 近カメラprune: 学習カメラ中心 {args.near_prune}m 以内を500iterごとに削除")
+        print(f"[thin] 近カメラprune: 学習カメラ中心から {args.near_prune:.3f}（COLMAP単位）以内を500iterごとに削除")
     ctr_targets = None
     if args.centroid_weight > 0:
         cmasks = load_wire_masks(dataset.source_path, args.wire_mask_dir, trainCameras)
@@ -347,7 +362,10 @@ if __name__ == "__main__":
     parser.add_argument("--supersample", type=int, default=1)
     parser.add_argument("--ss_filter", choices=["ss", "base"], default="ss")
     parser.add_argument("--centroid_weight", type=float, default=0.0)
-    parser.add_argument("--near_prune", type=float, default=0.0)
+    parser.add_argument("--near_prune", type=float, default=0.0,
+                        help="学習カメラ中心からこの距離以内のガウシアンを500iterごとに削除。COLMAP座標の単位（メートルではない）")
+    parser.add_argument("--near_prune_rel", type=float, default=0.0,
+                        help="削除半径を K×scene.cameras_extent で指定（尺度不変版。監査R-11）")
     parser.add_argument("--no_3d_filter", action="store_true",
                         help="アブレーション: Mipの3Dスムージングフィルタを無効化する")
     args = parser.parse_args(sys.argv[1:])
