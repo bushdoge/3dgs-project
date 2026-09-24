@@ -28,6 +28,7 @@
 | `error_budget.py` | 残差の誤差収支：細線マスク内の二乗誤差を 輝度/色・位置ずれ/形状・裾集中度 に分解する |
 | `tail_map.py` | 裾の空間分布診断：誤差上位断面がどの視点・線上のどこに集中するかを可視化（視点別シェア・隣接クラスタリング率・GT重畳ヒートマップ）。出力は `$EXP/gt/tail_map_<model>_<iter>.{json,png}` |
 | `phase2/` | Phase 2（AA前提の細線特化最適化）のコード。`train_thin.py`（mip-splatting改の学習: L1画素重み3方式＋視点適応サンプリング。tools/mip-splatting へコピーして venv 実行）・`tail_corr3d.py`（裾の3D対応診断。要 OpenEXR）・`collect_wave1.py`＋`phase2_wave1_results.csv`（第1波の集計） |
+| `real/` | **実データ（GTマスク・深度が無い撮影素材）の評価**。GT画像から「青空上の暗い細線」を検出して細線マスクの代用にする（`wire_struct_masks.py`・`wire_extrap.py`＝空背景/構造背景の区間分け）。`eval_real_wires*.py`（細線PSNR・保持率）、`eval_real_open_vs_struct.py`（空背景/構造背景）、`eval_prune_sweep.py`・`analyze_np05.py`（近カメラprune）、`eval_real_lodgs.py`・`lodgs_lod_ablation.py`（LOD-GS）、`hf_calib.py`（高周波保持率の定義）、`real_wire_sfm.py`（SfM欠乏の実データ版）、`real_paired_stats.py`（手法差の視点単位対検定＋seed平均）。**マスクは電線の見えやすい区間だけを拾う選択バイアスがある**（監査R-02）。2026-09-24 に tmp/ から移設 |
 | `patches/` | `tools/` の他手法（git管理外）に当てた修正の差分。**比較実験を再現するには当てる必要がある**。`lodgs_2d2512a.patch`（LOD-GS：単一スケール対応＋チェックポイントに `_coefs` を含める。§9af）・`raings_1bee777.patch`（RAIN-GS：`args_dict` が None のときのガード。§9k）。各ファイル冒頭に元コミットと当て方を記載 |
 | `figs/` | スイープ結果・消失率の図 |
 
