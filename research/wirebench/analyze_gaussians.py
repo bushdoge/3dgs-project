@@ -8,6 +8,9 @@
 # 使い方: python3 analyze_gaussians.py <実験dir> [iteration] [モデル出力dir名] [--near-cam 1.5]
 #   例: python3 analyze_gaussians.py experiments/20260704_wb_r15mm_f80_open 7000 output_mip
 # 出力: 標準出力＋ <実験dir>/gt/gaussian_analysis_<model_dir>_<iteration>.json
+# 2026-09-24（監査R-06/R-13）：Mip の ply は 3Dフィルタ（filter_3D）込みの「実効」不透明度・スケールで集計する
+#   （Mip のレンダラが使う値。生の値は *_raw キーに併記）。近傍判定は中心線への線分距離（wbgeom）に変更。
+#   それ以前の json/npz は生の値・点最近傍距離なので、Mip と素3DGSの不透明度比較には使えない。
 
 import argparse
 import json
@@ -27,17 +30,7 @@ def fresh(p):
     return p
 
 
-def umeyama(src, dst):
-    mu_s, mu_d = src.mean(0), dst.mean(0)
-    sc, dc = src - mu_s, dst - mu_d
-    cov = dc.T @ sc / len(src)
-    U, S, Vt = np.linalg.svd(cov)
-    d = np.sign(np.linalg.det(U @ Vt))
-    D = np.diag([1, 1, d])
-    R = U @ D @ Vt
-    s = (S * np.diag(D)).sum() / (sc ** 2).sum() * len(src)
-    t = mu_d - s * R @ mu_s
-    return s, R, t
+from wbgeom import align_colmap_to_gt, apply, wire_span, polyline_distance, gaussian_params  # noqa: E402
 
 
 def q(a, ps=(25, 50, 75)):
@@ -60,42 +53,32 @@ args = parser.parse_args()
 exp = Path(args.exp)
 ply_path = exp / args.model_dir / "point_cloud" / f"iteration_{args.iteration}" / "point_cloud.ply"
 v = PlyData.read(str(ply_path))["vertex"]
-xyz = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
-opacity = 1 / (1 + np.exp(-np.asarray(v["opacity"], np.float64)))          # raw→sigmoid
-scales = np.exp(np.stack([v[f"scale_{i}"] for i in range(3)], 1).astype(np.float64))
-# 色: SH0次係数→RGB（0〜1にクリップ）。霧ガウシアンが注入点由来（暗灰色）かの判定に使う
+xyz, opacity_raw, scales_raw, opacity, scales, has_filter = gaussian_params(v)   # opacity/scales は実効値
 rgb = np.clip(0.5 + 0.28209479 * np.stack([v[f"f_dc_{i}"] for i in range(3)], 1), 0, 1)
 print(f"ガウシアン総数: {len(xyz)}（{ply_path}）")
 
-# ── COLMAP→GT 位置合わせ（カメラ中心の対応から推定）────────────────────────────
+# ── COLMAP→GT 位置合わせ（wbgeom。analyze_sfm.py と同じ推定）────────────────────────
 rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
-gt = json.load(open(exp / "gt" / "poses.json"))
-colmap_c, gt_c = [], []
-for img in rec.images.values():
-    stem = Path(img.name).stem
-    if stem in gt["frames"]:
-        colmap_c.append(img.projection_center())
-        gt_c.append(np.array(gt["frames"][stem])[:3, 3])
-s, R, t = umeyama(np.array(colmap_c), np.array(gt_c))
-rmse = np.sqrt((((s * (R @ np.array(colmap_c).T)).T + t - np.array(gt_c)) ** 2).sum(1).mean())
-print(f"位置合わせ RMSE: {rmse*1000:.1f}mm（スケール {s:.4f}）")
-assert rmse < 0.02, "位置合わせが粗すぎる（>2cm）"
-xyz_w = (s * (R @ xyz.T)).T + t
-scales_w = scales * s                      # 相似スケールで実寸[m]へ
+al = align_colmap_to_gt(exp, rec)
+gt, s, rmse = al["gt"], al["s"], al["rmse"]
+print(f"位置合わせ RMSE: {rmse*1000:.1f}mm（スケール {s:.4f}）"
+      + (f"  ※外れカメラ {al['outlier_frames']} を除外" if al["outlier_frames"] else ""))
+assert al["ok"], "位置合わせが粗すぎる（>2cm）"
+xyz_w = apply(al, xyz)
+scales_w = scales * s                      # 相似スケールで実寸[m]へ（実効スケール）
+scales_raw_w = scales_raw * s
+if has_filter:
+    print("Mip の ply（filter_3D あり）：不透明度・スケールは 3Dフィルタ込みの実効値で集計（生の値も併記）")
 
-# ── 電線スパン近傍の統計（analyze_sfm.py の厳密版と同じ定義）──────────────────────
-wp = np.load(exp / "gt" / "wire_points.npz")
-wire_only = wp["points"][wp["labels"] == 1]
-sp = json.load(open(exp / "gt" / "scene_params.json"))
-WIRE_R = sp["wire_radius"]
-POLE_XY = np.array(sp["pole_positions"])
-far = np.min(np.linalg.norm(wire_only[:, None, :2] - POLE_XY[None], axis=2), axis=1) > 0.3
-span = wire_only[far]
-surf_dist = cKDTree(span).query(xyz_w)[0] - WIRE_R
+# ── 電線スパン近傍（analyze_sfm.py の厳密版と同じ定義＝中心線への線分距離−線半径）───────
+span, WIRE_R, _ = wire_span(exp)
+surf_dist = polyline_distance(xyz_w, span, max_exact=0.5) - WIRE_R
 
 result = {"model_dir": args.model_dir, "iteration": int(args.iteration),
           "n_gaussians": len(xyz), "align_rmse_m": round(float(rmse), 4),
-          "wire_radius_m": WIRE_R, "span_stats": {}, "near_cam_m": args.near_cam,
+          "wire_radius_m": WIRE_R, "span_stats": {}, "has_3d_filter": bool(has_filter),
+          "opacity_kind": "effective(3D filter)" if has_filter else "raw(=effective)",
+          "near_def": "polyline", "align_outlier_frames": al["outlier_frames"], "near_cam_m": args.near_cam,
           "fog_per_test_view": {}}
 print(f"\n[電線スパン近傍のガウシアン]（表面距離。スパンGT {len(span)}点・半径{WIRE_R*1000:.0f}mm補正）")
 for name, th in [("3cm", 0.03), ("10cm", 0.10)]:
@@ -104,6 +87,9 @@ for name, th in [("3cm", 0.03), ("10cm", 0.10)]:
     st = {"count": int(m.sum()),
           "opacity_q25_50_75": q(op),
           "opacity_ge_0.5_count": int((op >= 0.5).sum()),
+          "opacity_raw_q25_50_75": q(opacity_raw[m]),
+          "opacity_raw_ge_0.5_count": int((opacity_raw[m] >= 0.5).sum()),
+          "anisotropy_raw_q25_50_75": q(scales_raw_w[m].max(1) / np.maximum(scales_raw_w[m].min(1), 1e-9)),
           "scale_max_axis_mm_q25_50_75": q(sc_max * 1000),
           "anisotropy_q25_50_75": q(sc_max / np.maximum(sc_min, 1e-9))}
     result["span_stats"][name] = st
@@ -170,5 +156,6 @@ json.dump(result, open(out, "w"), indent=1, ensure_ascii=False)
 # 不透明度分布の生値（ヒストグラム図用）: スパン3cm以内のガウシアンの不透明度と最大軸長
 m3 = surf_dist < 0.03
 np.savez(fresh(exp / "gt" / f"gaussian_analysis_{args.model_dir}_{args.iteration}.npz"),
-         opacity_3cm=opacity[m3], scale_max_3cm=scales_w[m3].max(1))
-print(f"\n保存: {out}（＋同名.npz: スパン3cm内の不透明度・最大軸の生値）")
+         opacity_3cm=opacity[m3], scale_max_3cm=scales_w[m3].max(1),
+         opacity_raw_3cm=opacity_raw[m3], scale_max_raw_3cm=scales_raw_w[m3].max(1))
+print(f"\n保存: {out}（＋同名.npz: スパン3cm内の不透明度・最大軸。実効値と *_raw）")

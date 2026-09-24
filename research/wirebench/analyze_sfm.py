@@ -27,35 +27,22 @@ gt = json.load(open(exp / "gt" / "poses.json"))
 wp = np.load(exp / "gt" / "wire_points.npz")
 wire_pts, wire_labels = wp["points"], wp["labels"]
 
-# ── COLMAPカメラ中心 と GTカメラ中心を画像名で対応付け ─────────────────────────
-colmap_centers, gt_centers = [], []
-for img in rec.images.values():
-    stem = Path(img.name).stem            # frame_0001
-    if stem not in gt["frames"]:
-        continue
-    colmap_centers.append(img.projection_center())
-    gt_centers.append(np.array(gt["frames"][stem])[:3, 3])
-colmap_centers = np.array(colmap_centers)
-gt_centers = np.array(gt_centers)
-print(f"登録画像: {len(colmap_centers)} / {len(gt['frames'])}")
+# ── COLMAP→GT の相似変換（カメラ中心の対応から。wbgeom.align_colmap_to_gt）──────────
+# 素朴な Umeyama の RMSE が 2cm を超えたら外れカメラを除いてロバストに再推定する（監査R-07：
+# crossing f40 は3台だけ約10mずれており、素朴な推定では RMSE 3.2m で全点の距離が無意味になっていた）。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wbgeom import align_colmap_to_gt, polyline_distance      # noqa: E402
 
-# ── Umeyama相似変換（COLMAP座標 → GT/Blender座標）────────────────────────────
-def umeyama(src, dst):
-    mu_s, mu_d = src.mean(0), dst.mean(0)
-    sc, dc = src - mu_s, dst - mu_d
-    cov = dc.T @ sc / len(src)
-    U, S, Vt = np.linalg.svd(cov)
-    d = np.sign(np.linalg.det(U @ Vt))
-    D = np.diag([1, 1, d])
-    R = U @ D @ Vt
-    s = (S * np.diag(D)).sum() / (sc ** 2).sum() * len(src)
-    t = mu_d - s * R @ mu_s
-    return s, R, t
-
-s, R, t = umeyama(colmap_centers, gt_centers)
-aligned = (s * (R @ colmap_centers.T)).T + t
-rmse = np.sqrt(((aligned - gt_centers) ** 2).sum(1).mean())
+al = align_colmap_to_gt(exp, rec)
+s, R, t = al["s"], al["R"], al["t"]
+rmse = al["rmse"]
+print(f"登録画像: {al['n_cams']} / {len(gt['frames'])}")
 print(f"位置合わせ RMSE: {rmse:.4f} m（スケール {s:.4f}）")
+if al["rmse_naive"] > 0.02:
+    print(f"[警告] 素朴な位置合わせの RMSE が {al['rmse_naive']:.3f} m。外れカメラ {len(al['outlier_frames'])} 台 "
+          f"{al['outlier_frames']} を除いて再推定した（インライア {al['n_inliers']} 台で RMSE {rmse*1000:.1f} mm）")
+if not al["ok"]:
+    print("[警告] インライアでも RMSE が 2cm を超える＝SfMそのものが破綻。以下の数値は信頼できない")
 
 # ── SfM点群を変換して細線からの距離を測る ──────────────────────────────────────
 pts3d = np.array([p.xyz for p in rec.points3D.values()])
@@ -89,24 +76,7 @@ span = wire_only[far_from_pole]
 # GTサンプルは13.7cm間隔と粗く、点への最近傍距離だとサンプル間の中央にあるSfM点を
 # 取りこぼす（幾何計算で捕捉率約62%＝厳密カウントが系統的に約4割過小。監査C2）。
 # wire_points は電線ごとに順に並んでいるので、連続点間の距離が飛ぶ所で線を分割する。
-def polyline_distance(query, poly_pts, gap=0.5):
-    """query の各点から、poly_pts が表す折れ線群への最短距離を返す。"""
-    breaks = np.where(np.linalg.norm(np.diff(poly_pts, axis=0), axis=1) > gap)[0] + 1
-    best = np.full(len(query), np.inf)
-    for seg in np.split(poly_pts, breaks):
-        if len(seg) < 2:
-            continue
-        a, b = seg[:-1], seg[1:]                       # 各線分の端点 (M,3)
-        ab = b - a
-        L2 = np.maximum((ab ** 2).sum(1), 1e-12)
-        # (N,M) で全線分への距離を出す。点数が小さい（数百）ので素直に総当たりでよい。
-        w = query[:, None, :] - a[None]
-        u = np.clip((w * ab[None]).sum(2) / L2[None], 0.0, 1.0)
-        proj = a[None] + u[..., None] * ab[None]
-        d = np.linalg.norm(query[:, None, :] - proj, axis=2).min(1)
-        best = np.minimum(best, d)
-    return best
-
+# 線分距離の実装は wbgeom.polyline_distance（analyze_gaussians / ablate_wire_gaussians と共通）
 sdist_pt, _ = cKDTree(span).query(pts3d_w)            # 旧定義（比較用に残す）
 sdist = polyline_distance(pts3d_w, span)
 surf_dist = sdist - WIRE_R                            # 電線表面からの距離
@@ -125,7 +95,6 @@ for th in (0.03, 0.05):
 # 混合マスク全体に加え、電線スパン部だけの占有率も測る。欠乏倍率の分子と分母で
 # 母集団（混合 vs 電線のみ）が食い違っていたため（監査C1）。
 # 分類は eval_wires.py と同じ「GT点を投影して最近傍ラベル」方式を共有する。
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_wires import load_wire_bar_splitter          # noqa: E402
 
 mask_dir = exp / "gt" / "mask_thin"
@@ -165,8 +134,9 @@ else:
 mixed_pt_share = (dist < 0.10).sum() / len(pts3d) * 100
 mixed_deficiency = pix_share / max(mixed_pt_share, 1e-9)
 
-json.dump({"n_registered": len(colmap_centers), "n_points3d": len(pts3d),
-           "align_rmse_m": float(rmse), "wire_span_points": strict,
+json.dump({"n_registered": al["n_cams"], "n_points3d": len(pts3d),
+           "align_rmse_m": float(rmse), "align_rmse_naive_m": al["rmse_naive"],
+           "align_ok": bool(al["ok"]), "outlier_frames": al["outlier_frames"], "wire_span_points": strict,
            "thin_pixel_share_pct": float(pix_share),
            "wire_pixel_share_pct": wire_pix_share,
            "wire_point_share_pct": float(wire_pt_share),
