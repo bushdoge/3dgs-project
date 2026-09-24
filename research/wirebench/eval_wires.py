@@ -8,6 +8,11 @@
 #   Recall(I) = 被覆画素数 / マスク画素総数。R_gt=Recall(GT画像) は検出器自体の妥当性、
 #   R_ren=Recall(レンダ) が本命。正規化recall DR = R_ren / max(R_gt, 1e-6)、消失率 = 1 - DR。
 #   検出は常に「画像」に対して行い、マスクは正解位置としてのみ使う（マスク自体には検出をかけない）。
+#   【2026-09-24 監査R-09】検出はバンド内に限定されるが、背景のエッジ（建物・柵・テクスチャ）もバンド内に入ると
+#   「被覆」に数えられ、消失率は背景によって上限が低く飽和する（enclosed では電線が完全に消えても約4%）。
+#   そこで GT 画像から細線を inpaint で消した画像の recall を「床」R_floor として測り、
+#   正規化消失率 disappearance_norm = (1-DR)/(1-DR_floor)（DR_floor=R_floor/R_gt。0=消えていない・1=完全に消えた
+#   と同等）を併記する。電線のみ/棒のみの消失率も併記（従来の disappearance_rate は電線＋棒の混合のまま）。
 #
 # 使い方: python3 eval_wires.py <実験dir> [iteration] [モデル出力dir名] [オプション]
 #   例: python3 eval_wires.py . 7000            → <実験dir>/output/test/ours_7000 を評価
@@ -172,13 +177,17 @@ def main():
         except Exception as e:
             print(f"[警告] images.bin を読めなかったので input/ から算出します: {e}")
     if not names:
-        names = sorted(p.stem for p in (exp / "input").glob("*.png"))
+        names = sorted(p.stem for p in (exp / "input").iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
     test_names = names[::8]
 
     splitter = load_wire_bar_splitter(exp)
     rows = []              # PSNR系（従来どおり）
     split_rows = []        # 電線のみ / フェンス棒（2026-09-06 追加）
     recall_rows = []       # 消失率系（新規）: name, r_gt, r_ren, n_covered_gt, n_covered_ren, n_total
+    cls_rows = []          # 2026-09-24: 電線のみ/棒のみ/床: (name, {cls: (cov_gt, cov_ren, cov_floor, tot)})
+    split_bg = []          # 2026-09-24: split に成功した視点の背景PSNR（gap_wire を同じ視点集合で出すため）
+    missing = []
+    row_idx = []           # rows[j] がテスト視点の何番目か（比較図で正しいレンダを引くため）
     k = args.mask_dilate
     kernel5 = np.ones((2 * k + 1, 2 * k + 1), np.uint8) if k > 0 else None
     for i, name in enumerate(test_names):
@@ -187,7 +196,9 @@ def main():
         frame_no = name.split("_")[1]                       # frame_0001 → 0001
         mask = cv2.imread(str(exp / "gt" / "mask_thin" / f"{frame_no}.png"), 0)
         if ren is None or gt is None or mask is None:
+            missing.append(name)
             continue
+        row_idx.append(i)
         if mask.shape != gt.shape[:2]:
             mask = cv2.resize(mask, (gt.shape[1], gt.shape[0]), interpolation=cv2.INTER_NEAREST)
         mb = mask > 127
@@ -197,6 +208,7 @@ def main():
         if splitter is not None:
             sp = splitter(name, m)
             if sp is not None:
+                split_bg.append(rows[-1][3])
                 wmask, bmask = sp
                 split_rows.append((
                     psnr(ren, gt, np.repeat(wmask[..., None], 3, 2)) if wmask.any() else np.nan,
@@ -211,6 +223,23 @@ def main():
         r_gt, cov_gt, tot = covered_fraction(det_gt, mb, args.tau)
         r_ren, cov_ren, _ = covered_fraction(det_ren, mb, args.tau)
         recall_rows.append((name, r_gt, r_ren, cov_gt, cov_ren, tot))
+
+        # 床（細線を inpaint で消した GT で同じ検出をしたときの recall）と、電線のみ/棒のみの内訳
+        inp = cv2.inpaint(gt, cv2.dilate(mb.astype(np.uint8), np.ones((7, 7), np.uint8)), 7, cv2.INPAINT_TELEA)
+        det_floor = detect_line_map(inp, band, args.canny_lo, args.canny_hi,
+                                    args.hough_thresh, args.min_len, args.max_gap)
+        cls = {"mix": mb}
+        if splitter is not None:
+            spu = splitter(name, mb)
+            if spu is not None:
+                cls["wire"], cls["bar"] = spu
+        ent = {}
+        for cname, cm in cls.items():
+            _, cg, t_ = covered_fraction(det_gt, cm, args.tau)
+            _, cr, _ = covered_fraction(det_ren, cm, args.tau)
+            _, cf, _ = covered_fraction(det_floor, cm, args.tau)
+            ent[cname] = (cg, cr, cf, t_)
+        cls_rows.append((name, ent))
 
     print(f"{'view':12s} {'全体PSNR':>9s} {'細線PSNR':>9s} {'背景PSNR':>9s} {'細線px%':>8s}")
     for n, p_all, p_wire, p_bg, frac in rows:
@@ -249,6 +278,30 @@ def main():
     print(f"\n→ 正規化recall DR = R_ren/R_gt = {recall_norm:.3f}　消失率 = 1-DR = {disappearance_rate:.3f}"
           f"　(tau={args.tau}px, band={args.band_radius}px)")
 
+    # ── 2026-09-24 追加：床で正規化した消失率（電線＋棒 / 電線のみ / 棒のみ）──
+    def _agg(cname):
+        c = np.zeros(4)
+        for _, ent in cls_rows:
+            if cname in ent:
+                c += ent[cname]
+        cg, cr, cf, t_ = c
+        if t_ == 0 or cg == 0:
+            return None
+        dr, drf = cr / cg, cf / cg
+        return {"recall_gt": cg / t_, "recall_ren": cr / t_, "recall_floor": cf / t_,
+                "disappearance_rate": 1 - dr, "dr_floor": drf,
+                "max_measurable_disappearance": 1 - drf,
+                "disappearance_norm": (1 - dr) / (1 - drf) if drf < 0.999 else float("nan")}
+    disap_by_class = {c: _agg(c) for c in ("mix", "wire", "bar")}
+    for c, d in disap_by_class.items():
+        if d:
+            print(f"消失率[{c}] = {d['disappearance_rate']:.3f}　床(測れる上限) = {d['max_measurable_disappearance']:.3f}"
+                  f"　正規化 = {d['disappearance_norm']:.3f}")
+    gap_wire_same = (float(np.mean(split_bg) - wire_only) if split_rows else None)
+    n_expected = len(test_names)
+    if missing:
+        print(f"[警告] テスト視点 {len(missing)}/{n_expected} のレンダ/GT/マスクが無く評価から外れた: {missing}")
+
     # 集計用JSON（run_sweep.pyが読む。既存キーは変えず追記のみ）
     json.dump({"iteration": int(it), "model_dir": model_dir,
                "psnr_all": float(arr[:, 0].mean()), "psnr_wire": float(arr[:, 1].mean()),
@@ -261,6 +314,9 @@ def main():
                "recall_ren_worst": float(recall_ren_worst),
                "tau_px": args.tau, "band_px": args.band_radius,
                "mask_dilate_px": args.mask_dilate,
+               "n_expected_views": n_expected, "missing_views": missing,
+               "gap_wireonly_sameviews_db": gap_wire_same,
+               "disappearance_by_class": disap_by_class,
                "hough_params": {"canny_lo": args.canny_lo, "canny_hi": args.canny_hi,
                                  "hough_thresh": args.hough_thresh, "min_len": args.min_len,
                                  "max_gap": args.max_gap}},
@@ -269,7 +325,7 @@ def main():
     # ── 比較図: 細線が最も壊れている視点(PSNR基準)で GT|render|差分 と拡大クロップ ──────
     worst = int(np.argmin([r[2] for r in rows]))
     name = rows[worst][0]
-    i = worst
+    i = row_idx[worst]
     ren = cv2.imread(str(rdir / "renders" / f"{i:05d}.png"))
     gt = cv2.imread(str(rdir / "gt" / f"{i:05d}.png"))
     frame_no = name.split("_")[1]
@@ -303,7 +359,7 @@ def main():
     if valid_idx:
         worst_r = min(valid_idx, key=lambda idx: recall_rows[idx][2])
         rname = recall_rows[worst_r][0]
-        i = worst_r
+        i = row_idx[worst_r]
         ren = cv2.imread(str(rdir / "renders" / f"{i:05d}.png"))
         frame_no = rname.split("_")[1]
         mask = cv2.imread(str(exp / "gt" / "mask_thin" / f"{frame_no}.png"), 0)
