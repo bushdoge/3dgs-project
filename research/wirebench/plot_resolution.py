@@ -21,6 +21,7 @@ import numpy as np
 
 HERE = Path(__file__).parent
 rows = list(csv.DictReader(open(HERE / "resolution_results.csv")))
+rows = [r for r in rows if r.get("gt", "denoise64") == "denoise64"]  # 床なしGT（C3）は §9ar で別に集計
 
 def collect(col):
     v = defaultdict(list)          # (px, model, iters) -> [PSNR]

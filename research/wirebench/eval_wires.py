@@ -344,7 +344,10 @@ def main():
         for ci, q in enumerate([0.3, 0.7]):
             cy, cx = int(np.quantile(ys, q)), int(np.quantile(xs, q))
             h, w = 140, 240
-            y0, x0 = max(cy - h // 2, 0), max(cx - w // 2, 0)
+            # 画像端でクロップが欠けないよう画像内に収める（2026-09-25：res512 で下端に掛かり hstack が落ちた）
+            h, w = min(h, gt.shape[0]), min(w, gt.shape[1])
+            y0 = min(max(cy - h // 2, 0), gt.shape[0] - h)
+            x0 = min(max(cx - w // 2, 0), gt.shape[1] - w)
             gtc = gt[y0:y0 + h, x0:x0 + w]
             rnc = ren[y0:y0 + h, x0:x0 + w]
             z = 3

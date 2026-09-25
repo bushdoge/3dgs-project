@@ -3,6 +3,8 @@
 #   res512 では 2px 膨張マスクの約72%が背景画素になり、「1.5pxでは学習延長が無効」は md2 でしか出ない。
 #   md0 の summary が無い run は eval_wires.py --mask-dilate 0 をその場で実行する。
 # 対象 run は下の RUNS（glob）で決める。追加run（C2/C3 の _r3 等）は命名規則に合えば自動で拾う。
+# 2026-09-25（監査R-03・修正計画C3）：床なしGT（4096spp・デノイズ無し）の *_clean 実験を gt=clean4096 として追加。
+#   従来の64spp＋デノイザGTは gt=denoise64。plot_resolution.py は denoise64 だけで図を描く。
 # 使い方: python3 collect_resolution.py   → resolution_results.csv（plot_resolution.py が読む）
 import csv
 import json
@@ -13,7 +15,7 @@ from pathlib import Path
 E = Path("/workspace/experiments")
 HERE = Path(__file__).parent
 
-# (実験, 解像度ラベル, 見かけ幅p50, モデル種別, iter, モデルdirのglob)
+# (実験, 解像度ラベル, 見かけ幅p50, モデル種別, iter, モデルdirのglob)。実験名が _clean で終わるものは gt=clean4096
 RUNS = [
     ("20260704_wb_r15mm_f80_open", "1024x768", 3.0, "3dgs", 7000,
      ["output_gen_newdef_r*", "output_gen_noexp_r*", "output_gen_old_r*", "output_gen_oplr05_r*"]),
@@ -26,6 +28,12 @@ RUNS = [
     ("20260907_wb_r15mm_f80_open_res512", "512x384", 1.51, "3dgs", 30000, ["output_3dgs30000", "output_3dgs30000_r*"]),
     ("20260907_wb_r15mm_f80_open_res512", "512x384", 1.51, "mip_ks0.1", 30000, ["output_mip30k_ks01", "output_mip30k_ks01_r*"]),
     ("20260907_wb_r15mm_f80_open_res512", "512x384", 1.51, "mip_ks0.05", 30000, ["output_mip30k_ks005"]),
+    ("20260924_wb_r15mm_f80_open_clean", "1024x768", 3.0, "3dgs", 7000, ["output_3dgs7k_r*"]),
+    ("20260924_wb_r15mm_f80_open_clean", "1024x768", 3.0, "3dgs", 30000, ["output_3dgs30k_r*"]),
+    ("20260924_wb_r15mm_f80_open_clean", "1024x768", 3.0, "mip_ks0.1", 30000, ["output_mip30k_r*"]),
+    ("20260924_wb_r15mm_f80_open_res512_clean", "512x384", 1.51, "3dgs", 7000, ["output_3dgs7k_r*"]),
+    ("20260924_wb_r15mm_f80_open_res512_clean", "512x384", 1.51, "3dgs", 30000, ["output_3dgs30k_r*"]),
+    ("20260924_wb_r15mm_f80_open_res512_clean", "512x384", 1.51, "mip_ks0.1", 30000, ["output_mip30k_r*"]),
 ]
 
 
@@ -46,7 +54,7 @@ for exp, res, px, kind, it, globs in RUNS:
         models += sorted(p.name for p in (E / exp).glob(g) if (p / "test" / f"ours_{it}" / "renders").exists())
     for seed, m in enumerate(dict.fromkeys(models), 1):
         a, b = summary(exp, m, it, 2), summary(exp, m, it, 0)
-        rows.append({"exp": exp, "res": res, "wire_px_p50": px, "model": kind, "iters": it, "seed": seed,
+        rows.append({"exp": exp, "gt": "clean4096" if exp.endswith("_clean") else "denoise64", "res": res, "wire_px_p50": px, "model": kind, "iters": it, "seed": seed,
                      "model_dir": m,
                      "psnr_wireonly": round(a["psnr_wireonly"], 2), "psnr_bar": round(a["psnr_bar"], 2),
                      "psnr_thin_mixed": round(a["psnr_wire"], 2), "psnr_bg": round(a["psnr_bg"], 2),
@@ -54,7 +62,7 @@ for exp, res, px, kind, it, globs in RUNS:
                      "disappearance_rate": round(a["disappearance_rate"], 3),
                      "psnr_wireonly_md0": round(b["psnr_wireonly"], 2), "psnr_bar_md0": round(b["psnr_bar"], 2),
                      "gap_wireonly_md0_db": round(b["gap_wireonly_db"], 2)})
-        print(f"{exp[-22:]:22s} {kind:10s} {it:6d} {m:28s} md2 {rows[-1]['psnr_wireonly']:6.2f}  md0 {rows[-1]['psnr_wireonly_md0']:6.2f}")
+        print(f"{exp[-28:]:28s} {kind:10s} {it:6d} {m:28s} md2 {rows[-1]['psnr_wireonly']:6.2f}  md0 {rows[-1]['psnr_wireonly_md0']:6.2f}")
 
 with open(HERE / "resolution_results.csv", "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
