@@ -26,7 +26,8 @@ from wire_struct_masks import build   # noqa: E402
 
 E = Path("/workspace/experiments")
 DEFAULT_GROUPS = ["3dgs30k=output_30k,output_30k_r*", "mip30k=output_mip30k,output_mip30k_r*",
-                  "mip_np10=output_mip30k_np10,output_mip30k_np10_r*", "lodgs=output_lodgs_30k,output_lodgs_30k_r*",
+                  "mip_np10=output_mip30k_np10,output_mip30k_np10_r*",
+                  "mip_nprel024=output_mip30k_nprel024_r*", "lodgs=output_lodgs_30k,output_lodgs_30k_r*",
                   "mip_np05=output_mip30k_np05", "mip_np03=output_mip30k_np03", "mip_ks005=output_mip30k_ks005"]
 MIN_PX = 300
 
