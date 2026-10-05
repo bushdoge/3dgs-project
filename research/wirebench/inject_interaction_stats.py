@@ -24,7 +24,9 @@ IT = 7000
 # 群名 → [(実験, モデルdir)]
 GROUPS = {
     "3dgs_pool12": [(BASE, f"output_gen_{c}_r{r}") for c in ("newdef", "noexp", "old", "oplr05") for r in (1, 2, 3)],
-    "3dgs_newdef": [(BASE, f"output_gen_newdef_r{r}") for r in (1, 2, 3)],
+    # 注入と同一設定の対照。r1〜r3 は §9x、r4〜r7 は 2026-10-05 追加（§9ar-12 の決着用）。レンダ済みの run を自動で拾う
+    "3dgs_newdef": [(BASE, f"output_gen_newdef_r{r}") for r in range(1, 10)
+                    if (E / BASE / f"output_gen_newdef_r{r}" / "test" / f"ours_{IT}" / "renders").is_dir()],
     "3dgs_inj": [(INJ, "output")] + [(INJ, f"output_3dgs_r{r}") for r in range(2, 8)],
     "mip": [(BASE, "output_mip")] + [(BASE, f"output_mip_r{r}") for r in range(2, 10)],
     "mip_inj": [(INJ, "output_mip")] + [(INJ, f"output_mip_r{r}") for r in range(2, 10)],
@@ -88,11 +90,11 @@ def main():
 
     print()
     show("inj_noAA_vs_pool12", "AA無し 注入効果（対 素12run プール）", [v["3dgs_inj"], v["3dgs_pool12"]], [1, -1])
-    show("inj_noAA_vs_newdef", "AA無し 注入効果（対 同一設定 newdef 3run）", [v["3dgs_inj"], v["3dgs_newdef"]], [1, -1])
+    show("inj_noAA_vs_newdef", "AA無し 注入効果（対 同一設定 newdef）", [v["3dgs_inj"], v["3dgs_newdef"]], [1, -1])
     show("inj_AA", "AA有り 注入効果（Mip 9 vs 9）", [v["mip_inj"], v["mip"]], [1, -1])
     show("interaction_pool12", "交互作用（素側=12run プール）",
          [v["3dgs_inj"], v["3dgs_pool12"], v["mip_inj"], v["mip"]], [1, -1, -1, 1])
-    show("interaction_newdef", "交互作用（素側=同一設定 newdef 3run）",
+    show("interaction_newdef", "交互作用（素側=同一設定 newdef）",
          [v["3dgs_inj"], v["3dgs_newdef"], v["mip_inj"], v["mip"]], [1, -1, -1, 1])
 
     # 旧版（正規近似 z）との対照
