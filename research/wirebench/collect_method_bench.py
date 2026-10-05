@@ -3,7 +3,8 @@
 # 旧版（7k/30k 混在・各1run・電線＋棒の混合指標）は git 履歴（e44cfbf）と研究メモ §9af に残っている。
 # summary が無い（または電線のみ指標が無い）run は eval_wires.py をその場で実行する。
 # 使い方: python3 collect_method_bench.py
-#   → method_bench_results.csv（1run1行）と method_bench_summary.csv（手法ごとの平均・sd・n、素3DGS 30k との差と Welch p）
+#   → method_bench_results.csv（1run1行）と method_bench_summary.csv（手法ごとの平均・sd・n、素3DGS 30k との差と Welch p、
+#     素3DGS 対比の全比較に Holm 補正をかけた p_holm）。主要な手法間の対比（LOD-GS−Mip 等）は標準出力に出す
 import csv
 import json
 import subprocess
@@ -39,6 +40,17 @@ def summary(model, md):
         subprocess.run([sys.executable, str(HERE / "eval_wires.py"), str(E / EXP), str(IT), model,
                         "--mask-dilate", str(md)], check=True, capture_output=True)
     return json.load(open(f))
+
+
+def holm(ps):
+    """Holm の逐次補正（ステップダウン、単調化あり）。None はそのまま返す"""
+    idx = [i for i, p in enumerate(ps) if p is not None]
+    order = sorted(idx, key=lambda i: ps[i])
+    out, run = list(ps), 0.0
+    for k, i in enumerate(order):
+        run = max(run, min(1.0, (len(order) - k) * ps[i]))
+        out[i] = run
+    return out
 
 
 def r(x, n=2):
@@ -79,7 +91,9 @@ for method, init, _ in METHODS:
     summ.append({"method": method, "init": init, "iters": IT, "n": len(v),
                  "wire_mean": r(v.mean()), "wire_sd": r(v.std(ddof=1)) if len(v) > 1 else None,
                  "wire_md0_mean": r(v0.mean()), "bg_mean": r(bg.mean()),
-                 "d_vs_3dgs": r(v.mean() - base.mean()), "welch_p_vs_3dgs": r(p, 4)})
+                 "d_vs_3dgs": r(v.mean() - base.mean()), "welch_p_vs_3dgs": p})
+for s, ph in zip(summ, holm([s["welch_p_vs_3dgs"] for s in summ])):
+    s["welch_p_vs_3dgs"], s["p_holm_vs_3dgs"] = r(s["welch_p_vs_3dgs"], 4), r(ph, 4)
 with open(HERE / "method_bench_summary.csv", "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=list(summ[0].keys()))
     w.writeheader()
@@ -87,5 +101,14 @@ with open(HERE / "method_bench_summary.csv", "w", newline="") as f:
 print()
 for s in summ:
     print(f"{s['method']:18s} n={s['n']}  wire {s['wire_mean']:6.2f} ± {s['wire_sd']}  md0 {s['wire_md0_mean']:6.2f}"
-          f"  bg {s['bg_mean']:6.2f}  Δ3dgs {s['d_vs_3dgs']:+.2f}  p={s['welch_p_vs_3dgs']}")
+          f"  bg {s['bg_mean']:6.2f}  Δ3dgs {s['d_vs_3dgs']:+.2f}  p={s['welch_p_vs_3dgs']}  p_holm={s['p_holm_vs_3dgs']}")
+
+# 手法間の主要な対比（Welch。素3DGS 対比の Holm 族とは別の、事前に決めた少数の比較）
+print()
+for a, b in (("lodgs", "mip_ks0.1"), ("absgs", "2dgs"), ("sadgs", "mip_ks0.1"), ("mip_ks0.05", "mip_ks0.1")):
+    va = np.array([x["psnr_wireonly"] for x in rows if x["method"] == a])
+    vb = np.array([x["psnr_wireonly"] for x in rows if x["method"] == b])
+    if len(va) > 1 and len(vb) > 1:
+        t = stats.ttest_ind(va, vb, equal_var=False)
+        print(f"{a} − {b}: {va.mean() - vb.mean():+.2f} dB  Welch p={t.pvalue:.4f}")
 print(f"saved: method_bench_results.csv（{len(rows)}行）/ method_bench_summary.csv")
