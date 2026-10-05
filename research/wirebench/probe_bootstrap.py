@@ -3,6 +3,8 @@
 # さらに物体単位の X（物体ごとに σ_fit のぼかし基準で割る）を出し、太い側（≥60mm＝2本の境界が独立）の物体×run を
 # 帰無分布として細い側と比べる。run 間で同じ物体は相関するので、run 平均した物体単位（n＝物体数）の比較も出す。
 # 使い方: python3 probe_bootstrap.py <exp> [--split train|test] [--B 1000] [--exclude 13]（消失した物体を除く）
+#   --presence：probe_presence.py の presence.csv を読み、保持率 <0.5 の（run, 物体）を消失として X から除き、幅ごとの消失率を出す。
+#     第2回の判定（設計書 §9）：細い幅ごとに物体単位 X を帰無（≥60mm）と片側 MWU、3幅で Holm、中央値 ≥1.3 を併記
 import argparse
 import sys
 from pathlib import Path
@@ -35,7 +37,19 @@ def x_table(df, models):
     return pd.Series(out)
 
 
-def per_object(df, models, d, exclude):
+def holm(ps):
+    """Holm 補正後の p（入力順で返す）"""
+    ps = np.asarray(ps, float)
+    order = np.argsort(ps)
+    adj = np.empty_like(ps)
+    run_max = 0.0
+    for k, i in enumerate(order):
+        run_max = max(run_max, min(1.0, (len(ps) - k) * ps[i]))
+        adj[i] = run_max
+    return adj
+
+
+def per_object(df, models, d, exclude, use_presence=False):
     """物体単位の X と、太い側（≥60mm）を帰無にした比較"""
     from scipy import stats
     g = df.groupby(["model", "obj", "kind", "radius_mm", "tilt_deg"], dropna=False).agg(
@@ -56,6 +70,17 @@ def per_object(df, models, d, exclude):
             rows.append(dict(model=m, obj=r.obj, radius_mm=r.radius_mm, tilt=r.tilt_deg, R=r.R,
                              X=r.R / float(np.interp(s_fit, b.sigma, b.R))))
     X = pd.DataFrame(rows)
+    if use_presence:
+        pr = pd.read_csv(d / "presence.csv", index_col="obj")
+        ret = pr.stack().rename("ret").reset_index().rename(columns={"level_1": "m"})
+        ret["model"] = ret.m.map(lambda m: next((x for x in models if x.startswith(m + "_")), m))
+        X = X.merge(ret[["model", "obj", "ret"]], on=["model", "obj"], how="left")
+        X["vanished"] = X.ret < 0.5
+        print("\n== 消失率（保持率 <0.5。行＝半径、列＝run） ==")
+        print(X.pivot_table(index="radius_mm", columns="model", values="vanished", aggfunc="sum").astype(int).to_string())
+        nv = X.groupby("radius_mm").agg(n_vanished=("vanished", "sum"), n=("vanished", "size"))
+        print("幅ごと（全run）:", {r: f"{v.n_vanished}/{v.n}" for r, v in nv.iterrows()})
+        X = X[~X.vanished]
     X.to_csv(d / "per_object_X.csv", index=False)
     print("\n== 物体単位の X（行＝半径・傾き） ==")
     print(X.pivot_table(index=["radius_mm", "tilt"], columns="model", values="X").round(2).to_string())
@@ -63,15 +88,18 @@ def per_object(df, models, d, exclude):
     nobj = null.groupby("obj").X.apply(lambda v: np.exp(np.log(v).mean()))
     print(f"\n帰無（≥60mm）物体×run n={len(null)}: 範囲 {null.X.min():.2f}〜{null.X.max():.2f}、95%点 {null.X.quantile(.95):.2f}"
           f"／run 幾何平均の物体単位 n={len(nobj)}: {nobj.min():.2f}〜{nobj.max():.2f}")
-    for rad in sorted(X.radius_mm.unique()):
-        if rad >= 60:
-            continue
+    thin_r = [r for r in sorted(X.radius_mm.unique()) if r < 60]
+    res = []
+    for rad in thin_r:
         t = X[(X.radius_mm == rad) & ~X.obj.isin(exclude)]
         to = t.groupby("obj").X.apply(lambda v: np.exp(np.log(v).mean()))
         u = stats.mannwhitneyu(np.log(t.X), np.log(null.X), alternative="greater").pvalue
         uo = stats.mannwhitneyu(np.log(to), np.log(nobj), alternative="greater").pvalue
+        res.append((rad, t, to, u, uo))
+    adj = holm([r[4] for r in res])
+    for (rad, t, to, u, uo), ph in zip(res, adj):
         print(f"{rad:5g}mm（除外 {exclude}）物体×run n={len(t)} 中央値 {t.X.median():.2f}・MWU p={u:.4f}（run を独立扱い）"
-              f"｜物体単位 n={len(to)} {np.round(to.values, 2).tolist()}・MWU p={uo:.3f}")
+              f"｜物体単位 n={len(to)} 中央値 {np.median(to):.2f} {np.round(np.sort(to.values), 2).tolist()}・MWU p={uo:.3f}・Holm {ph:.3f}")
 
 
 def main():
@@ -80,6 +108,7 @@ def main():
     ap.add_argument("--split", choices=["test", "train"], default="train")
     ap.add_argument("--B", type=int, default=1000)
     ap.add_argument("--exclude", type=int, nargs="*", default=[], help="物体単位の比較から除く物体 id（消失したもの）")
+    ap.add_argument("--presence", action="store_true", help="presence.csv で run ごとに消失物体を除く（設計書 §9）")
     a = ap.parse_args()
     d = Path(a.exp) / "gt" / ("probe_eval" if a.split == "test" else "probe_eval_train")
     df = pd.concat([pd.read_csv(p) for p in sorted(d.glob("*.csv")) if p.name not in AUX_CSV], ignore_index=True)
@@ -106,7 +135,7 @@ def main():
     print("\n== 向き別 R（板比。列＝傾き°） ==")
     print(g.R.unstack("tilt_deg").round(2).loc[models + [m for m in ["blur_s0.5", "blur_s1"] if m in pl.index]].to_string())
     res.to_csv(d / "bootstrap_X.csv")
-    per_object(df, models, d, a.exclude)
+    per_object(df, models, d, a.exclude, a.presence)
     print(f"\n保存: {d / 'bootstrap_X.csv'}")
 
 

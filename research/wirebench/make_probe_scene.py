@@ -10,12 +10,17 @@
 #   - カメラの注視点を z=1.4→2.4 に上げる（物体が画角の上端で切れないように。軌道 r=8.5・高さ 2.2±1.0 は base と同じ）
 #   - 電柱・電線・フェンスは置かない（マスクの混ざりを防ぐ。§9ab）。SfM の特徴点は地面と建物3個（base と同じ）で取る
 #   - GT は既定で 1024spp・デノイズ無し（§9ar-5 の教訓：デノイザは細い構造に視点独立な誤差を残す）
+#   - 第2回（研究メモ §9as-2、--layout random）：第1回は幅ごとに3物体しかなく物体間ばらつきが支配的で、
+#     最短物体だけが消えた（長さ・傾き・位置が交絡）。そこで半径ごとの本数を --n-per-radius で指定し、
+#     長さを --length に揃え、傾きは半径ごとに 0〜--max-tilt を等間隔に層別（区間内でランダム）、
+#     円周上の位置（2本の環に交互）と高さは --layout-seed で決める。見た目（空・材質・カメラ）は第1回と同じ
 #
 # 使い方:
 #   blender -b -P make_probe_scene.py -- --out <出力dir> [--frames 80] [--samples 1024] [--test-one]
+#   第2回: ... --layout random --radii-mm 7.5 15 30 60 120 --n-per-radius 8 8 8 4 4 --length 1.0
 # 出力構成:
 #   <out>/input/frame_####.png          学習用RGB
-#   <out>/gt/mask_obj/obj##/####.png    物体ごとのマスク（pass_index = 物体ID。1〜18 円柱、19 板）
+#   <out>/gt/mask_obj/obj##/####.png    物体ごとのマスク（pass_index = 物体ID。円柱が 1〜N、最後が板）
 #   <out>/gt/depth/####.exr             深度
 #   <out>/gt/poses.json                 GTカメラ姿勢（make_scene.py と同形式）
 #   <out>/gt/probe_objects.json         物体の幾何（ID・種類・半径・傾き・軸の端点／板の角）
@@ -44,6 +49,12 @@ parser.add_argument("--radii-mm", type=float, nargs="+", default=[7.5, 15, 30, 6
 parser.add_argument("--tilts-deg", type=float, nargs="+", default=[0, 30, 60])
 parser.add_argument("--obj-gray", type=float, default=0.02, help="発光物体の色（linear。暗い線＝電線と同じ向きのコントラスト）")
 parser.add_argument("--sky", type=float, nargs=3, default=[0.45, 0.6, 0.85], help="一様な空の色（linear）")
+parser.add_argument("--layout", choices=["grid", "random"], default="grid",
+                    help="grid＝第1回（半径×傾きの格子・傾きで長さが違う）、random＝第2回（§9as-2）")
+parser.add_argument("--n-per-radius", type=int, nargs="+", help="random：半径ごとの本数（--radii-mm と同じ数）")
+parser.add_argument("--length", type=float, default=1.0, help="random：円柱の長さ[m]（全物体で同じ）")
+parser.add_argument("--max-tilt", type=float, default=60.0, help="random：傾きの上限[°]")
+parser.add_argument("--layout-seed", type=int, default=0)
 args = parser.parse_args(argv)
 
 OUT = Path(args.out)
@@ -136,35 +147,59 @@ add_box("boxC", (1.5, 1.5, 1.5), (2.5, -2.8, 0), mat_boxC)
 
 # ── 測定対象：発光円柱（半径×傾き）と発光板 ───────────────────────────────────
 mat_obj = make_emission("probe", args.obj_gray)
-LENGTH = {0: 2.4, 30: 1.6, 60: 1.0}         # 傾きごとの長さ[m]（上下の画角に収める）
-ZC = {0: 4.45, 30: 4.85, 60: 4.85}          # 中心高さ（最下点が 4.1m 以上になる）
 RING_R = 3.0
 objects = []
-combos = [(ti, ri) for ti in range(len(args.tilts_deg)) for ri in range(len(args.radii_mm))]
-n_cyl = len(combos)
-for k, (ti, ri) in enumerate(combos):
-    tilt = float(args.tilts_deg[ti])
-    R = args.radii_mm[ri] / 1000.0
-    L = LENGTH.get(int(tilt), 1.6)
-    zc = ZC.get(int(tilt), 4.85)
-    # 半径の並びが円周上で偏らないよう、傾きのグループごとに開始位置をずらす
-    az = 2 * math.pi * ((ri * len(args.tilts_deg) + ti) % n_cyl) / n_cyl
-    c = np.array([RING_R * math.cos(az), RING_R * math.sin(az), zc])
+
+
+def add_cylinder(oid, R, tilt, L, az, zc, ring_r):
+    """円周（半径 ring_r）上の方位 az に接線向き・水平から tilt° 傾けた円柱を置く"""
+    c = np.array([ring_r * math.cos(az), ring_r * math.sin(az), zc])
     tangent = np.array([-math.sin(az), math.cos(az), 0.0])
     axis = math.cos(math.radians(tilt)) * tangent + np.array([0, 0, math.sin(math.radians(tilt))])
     p0, p1 = c - axis * L / 2, c + axis * L / 2
     assert min(p0[2], p1[2]) - R > 4.05, "物体の最下点が建物の高さに近すぎる"
     bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=R, depth=L, location=tuple(c))
     ob = bpy.context.object
-    oid = k + 1
     ob.name = f"cyl{oid:02d}"
     ob.rotation_mode = "QUATERNION"
     ob.rotation_quaternion = mathutils.Vector((0, 0, 1)).rotation_difference(mathutils.Vector(axis.tolist()))
     ob.data.materials.append(mat_obj)
     ob.pass_index = oid
     ob.visible_shadow = False   # 測定対象は影を落とさない（地面・建物の見え方を物体の有無で変えない）
-    objects.append({"id": oid, "kind": "cylinder", "radius_m": R, "tilt_deg": tilt, "length_m": L,
-                    "center": c.tolist(), "p0": p0.tolist(), "p1": p1.tolist()})
+    objects.append({"id": oid, "kind": "cylinder", "radius_m": R, "tilt_deg": round(float(tilt), 2), "length_m": L,
+                    "center": c.tolist(), "p0": p0.tolist(), "p1": p1.tolist(), "ring_r": ring_r})
+
+
+if args.layout == "grid":
+    LENGTH = {0: 2.4, 30: 1.6, 60: 1.0}         # 傾きごとの長さ[m]（上下の画角に収める）
+    ZC = {0: 4.45, 30: 4.85, 60: 4.85}          # 中心高さ（最下点が 4.1m 以上になる）
+    combos = [(ti, ri) for ti in range(len(args.tilts_deg)) for ri in range(len(args.radii_mm))]
+    n_cyl = len(combos)
+    for k, (ti, ri) in enumerate(combos):
+        tilt = float(args.tilts_deg[ti])
+        # 半径の並びが円周上で偏らないよう、傾きのグループごとに開始位置をずらす
+        az = 2 * math.pi * ((ri * len(args.tilts_deg) + ti) % n_cyl) / n_cyl
+        add_cylinder(k + 1, args.radii_mm[ri] / 1000.0, tilt, LENGTH.get(int(tilt), 1.6), az,
+                     ZC.get(int(tilt), 4.85), RING_R)
+else:
+    assert args.n_per_radius and len(args.n_per_radius) == len(args.radii_mm), "--n-per-radius は --radii-mm と同じ数"
+    rng = np.random.default_rng(args.layout_seed)
+    specs = []   # (半径[m], 傾き[°])
+    for rmm, n in zip(args.radii_mm, args.n_per_radius):
+        # 傾きの層別：[0, max] を n 等分し各区間で一様乱数（半径ごとに傾きの分布を揃える）
+        tilts = (np.arange(n) + rng.uniform(0, 1, n)) / n * args.max_tilt
+        specs += [(rmm / 1000.0, float(t)) for t in tilts]
+    order = rng.permutation(len(specs))          # 円周上の並びをランダムに（半径が偏らないように）
+    n_cyl = len(specs)
+    L = args.length
+    for slot, k in enumerate(order):
+        R, tilt = specs[k]
+        az = 2 * math.pi * (slot + rng.uniform(-0.25, 0.25)) / n_cyl
+        ring_r = RING_R + (0.5 if slot % 2 else -0.5)   # 隣どうしを2本の環に分けて重なりを減らす
+        half_v = math.sin(math.radians(tilt)) * L / 2
+        z_lo, z_hi = 4.15 + R + half_v, 5.30 - half_v  # 最下点 4.15m 以上・最上点 5.3m 以下（第1回の上下範囲）
+        zc = rng.uniform(z_lo, max(z_lo, z_hi))
+        add_cylinder(slot + 1, R, tilt, L, az, zc, ring_r)
 
 # 半平面の基準：水平な大きい板（下から見上げるので、4辺はどれも十分離れた1本ずつの境界）
 PLATE = (2.0, 1.5, 0.02)
@@ -244,6 +279,8 @@ for o in objects:
     width_est[o["id"]] = {"n_frames_in_view": len(ws),
                           "p50_px": round(float(np.median(ws)), 2) if ws else None}
 json.dump({"frames": N, "samples": args.samples, "denoise": bool(args.denoise), "res": args.res,
+           "layout": args.layout, "n_per_radius": args.n_per_radius, "length_m": args.length if args.layout == "random" else None,
+           "max_tilt": args.max_tilt, "layout_seed": args.layout_seed,
            "radii_mm": args.radii_mm, "tilts_deg": args.tilts_deg, "obj_gray": args.obj_gray, "sky": args.sky,
            "target": target.tolist(), "pixel_filter": scene.cycles.pixel_filter_type,
            "filter_width": float(scene.cycles.filter_width), "width_est": width_est},
