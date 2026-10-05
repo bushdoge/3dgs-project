@@ -14,11 +14,11 @@
 #                      誤差が大きいだけ」という代替説明を潰すための対照。
 #
 # 使い方: python3 analyze_selectivity.py <実験dir> <iteration> [model_dir]
-#         環境変数 DIL でマスク膨張（既定0＝厳密マスク）
+#         環境変数 DIL でマスク膨張（既定0＝厳密マスク）、SPLIT=train で学習視点
 import sys, os, glob
 from pathlib import Path
 import numpy as np, cv2
-_sys_path=__import__('sys').path; _sys_path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
+_sys_path=__import__('sys').path; _sys_path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names, split_view_names
 
 def read_depth_exr(path):
     """BlenderのZパス(EXR・単一チャンネル'V')を読む。空は無限大で入っている。"""
@@ -35,19 +35,20 @@ EXP = Path(sys.argv[1]).resolve()
 IT = int(sys.argv[2])
 MODEL = sys.argv[3] if len(sys.argv) > 3 else "output"
 DIL = int(os.environ.get("DIL", "0"))
+SPLIT = __import__("os").environ.get("SPLIT", "test")   # SPLIT=train で学習視点（train/ours_<it>/。§9as の妥当性確認）
 EXCL = 6
 
-md = EXP / MODEL / "test" / f"ours_{IT}"
+md = EXP / MODEL / SPLIT / f"ours_{IT}"
 gts = sorted(glob.glob(str(md / "gt" / "*.png")))
 if not gts:
     raise SystemExit(f"レンダが見つからない: {md}")
 rens = [str(md / "renders" / Path(g).name) for g in gts]   # 名前で対応付け（深度画像の混入対策）
-masks = [str(EXP / "gt" / "mask_thin" / f"{n.split(chr(95))[1]}.png") for n in test_view_names(EXP)][:len(gts)]
+masks = [str(EXP / "gt" / "mask_thin" / f"{n.split(chr(95))[1]}.png") for n in split_view_names(EXP, SPLIT)][:len(gts)]
 k = np.ones((3, 3), np.uint8)
 
 # A1d: edge_other を「物体シルエット（深度不連続＝片側境界）」と「面内テクスチャエッジ」に分割する。
 # 両側性仮説（線は両側を背景に挟まれた有界な帯で、エッジは片側だけの境界）の検定。
-DEPTH = [str(EXP / "gt" / "depth" / f"{n.split(chr(95))[1]}.exr") for n in test_view_names(EXP)][:len(gts)]
+DEPTH = [str(EXP / "gt" / "depth" / f"{n.split(chr(95))[1]}.exr") for n in split_view_names(EXP, SPLIT)][:len(gts)]
 REGIONS = ("thin", "edge_sil", "edge_tex") if DEPTH else ("thin", "edge_other")
 E0 = {r: [] for r in REGIONS}   # 画素ごとの二乗誤差
 EM = {r: [] for r in REGIONS}   # ±1pxシフト後の最小二乗誤差
@@ -91,7 +92,7 @@ for d in (E0, EM, CT):
     for r in d:
         d[r] = np.concatenate(d[r])
 
-print(f"実験 {EXP.name} / model {MODEL} / iter {IT} / DIL={DIL} / テスト{len(gts)}視点\n")
+print(f"実験 {EXP.name} / model {MODEL} / iter {IT} / DIL={DIL} / {SPLIT} {len(gts)}視点\n")
 print(f"{'領域':12s}{'PSNR':>8s}{'上位5%':>9s}{'上位10%':>9s}{'位置ずれ寄与':>13s}{'画素数':>10s}")
 for r in REGIONS:
     e = E0[r]; n = len(e)

@@ -27,3 +27,13 @@ def test_view_names(exp, hold=8):
     if not names:
         names = sorted(p.stem for p in (exp / "input").glob("*.jpg"))
     return names[::hold]
+
+
+def split_view_names(exp, split="test", hold=8):
+    """split='test' はテスト視点（test_view_names と同じ）、'train' は学習視点（登録名の名前順からテスト視点を除いたもの）。
+    3DGS/Mip の render.py が train/ours_<it>/ に書き出す順と一致する（2026-10-05、§9as）。"""
+    tv = test_view_names(exp, hold)
+    if split == "test":
+        return tv
+    s = set(tv)
+    return [n for n in test_view_names(exp, hold=1) if n not in s]

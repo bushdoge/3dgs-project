@@ -10,18 +10,20 @@
 # 「高周波領域一般が悪いだけ」であり、主張を弱める必要がある。
 #
 # 使い方: python3 eval_contrast_regions.py <実験dir> <iteration> [model_dir]
+#         環境変数 SPLIT=train で学習視点（render.py を --skip_test で実行しておく）
 import sys, glob
 from pathlib import Path
 import numpy as np, cv2
-_sys_path=__import__('sys').path; _sys_path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names
+_sys_path=__import__('sys').path; _sys_path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent)); from testviews import test_view_names, split_view_names
 
 EXP = Path(sys.argv[1]).resolve()
 IT = int(sys.argv[2])
 MODEL = sys.argv[3] if len(sys.argv) > 3 else "output"
-DIL = int(__import__("os").environ.get("DIL", "2"))   # eval_wires の md2 と揃える。DIL=0 で厳密マスク
+DIL = int(__import__("os").environ.get("DIL", "2"))
+SPLIT = __import__("os").environ.get("SPLIT", "test")   # SPLIT=train で学習視点（train/ours_<it>/。§9as の妥当性確認）   # eval_wires の md2 と揃える。DIL=0 で厳密マスク
 EXCL = 6         # edge_other から thin を除くときの余裕（ハロー混入を防ぐ）
 
-md = EXP / MODEL / "test" / f"ours_{IT}"
+md = EXP / MODEL / SPLIT / f"ours_{IT}"
 gts = sorted(glob.glob(str(md / "gt" / "*.png")))
 if not gts:
     raise SystemExit(f"レンダが見つからない: {md}")
@@ -36,7 +38,7 @@ for g in gts:
 masks = sorted(glob.glob(str(EXP / "gt" / "mask_thin" / "*.png")))
 
 # テスト視点はGT全体から8枚おき（3DGSのllffhold=8）。mask_thin は全フレーム分あるので対応付ける
-test_masks = [str(EXP / "gt" / "mask_thin" / f"{n.split(chr(95))[1]}.png") for n in test_view_names(EXP)][:len(gts)]
+test_masks = [str(EXP / "gt" / "mask_thin" / f"{n.split(chr(95))[1]}.png") for n in split_view_names(EXP, SPLIT)][:len(gts)]
 if len(test_masks) != len(gts):
     raise SystemExit(f"マスクとレンダの枚数が不一致: {len(test_masks)} vs {len(gts)}")
 
@@ -67,7 +69,7 @@ for gp, rp, mp in zip(gts, rens, test_masks):
         px[name] += int(m.sum())
 
 n = len(gts)
-print(f"実験 {EXP.name} / model {MODEL} / iter {IT} / テスト{n}視点")
+print(f"実験 {EXP.name} / model {MODEL} / iter {IT} / {SPLIT} {n}視点")
 print(f"{'領域':12s}{'PSNR平均':>10s}{'最悪視点':>10s}{'画素/視点':>12s}{'画面占有':>9s}")
 tot = gt.shape[0] * gt.shape[1]
 for name in ("thin", "edge_other", "flat"):
