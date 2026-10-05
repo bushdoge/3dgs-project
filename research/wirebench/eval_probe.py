@@ -16,7 +16,9 @@
 # 使い方:
 #   python3 eval_probe.py <exp> <iter> <model_dir名> [...]        # 学習済みモデル（test/ours_<iter>/renders）
 #   python3 eval_probe.py <exp> --blur-ref 0.5 1.0 1.5 2.0          # ぼかし基準（学習不要。テスト視点のGTから作る）
-# 出力: <exp>/gt/probe_eval/<model>_<iter>.csv（ぼかし基準は blur_s<σ>.csv）。1行＝1視点×1物体
+#   --split train を付けると学習視点（train/ours_<iter>/renders、render.py を --skip_test で実行しておく）で測る。
+#     テスト視点では空色のフローターが物体を覆う視点があり（§9as）、学習視点＝表現できるかだけを測る切り分け用
+# 出力: <exp>/gt/probe_eval/<model>_<iter>.csv（ぼかし基準は blur_s<σ>.csv。--split train は probe_eval_train/）。1行＝1視点×1物体
 import argparse
 import csv
 import json
@@ -162,13 +164,18 @@ def main():
     ap.add_argument("iteration", nargs="?", type=int)
     ap.add_argument("models", nargs="*")
     ap.add_argument("--blur-ref", type=float, nargs="*", help="GT をガウシアン σ[px] でぼかした擬似モデルを評価")
+    ap.add_argument("--split", choices=["test", "train"], default="test")
     a = ap.parse_args()
     exp = Path(a.exp).resolve()
     objs = json.load(open(exp / "gt" / "probe_objects.json"))
     poses = json.load(open(exp / "gt" / "poses.json"))
     f = poses["fx"]
     names = test_view_names(exp)
-    out_dir = exp / "gt" / "probe_eval"
+    if a.split == "train":
+        # 学習側の並び（COLMAP 登録名の名前順）からテスト視点を除いたもの。render.py の train/ も同じ順
+        tv = set(names)
+        names = [n for n in test_view_names(exp, hold=1) if n not in tv]
+    out_dir = exp / "gt" / ("probe_eval" if a.split == "test" else "probe_eval_train")
     out_dir.mkdir(exist_ok=True)
 
     jobs = []
@@ -176,7 +183,7 @@ def main():
         for s in a.blur_ref:
             jobs.append((f"blur_s{s:g}", None, s))
     for m in a.models:
-        jobs.append((f"{m}_{a.iteration}", exp / m / "test" / f"ours_{a.iteration}", None))
+        jobs.append((f"{m}_{a.iteration}", exp / m / a.split / f"ours_{a.iteration}", None))
     for tag, tdir, sigma in jobs:
         rows = []
         if tdir is not None:

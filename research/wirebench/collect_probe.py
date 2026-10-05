@@ -5,14 +5,18 @@
 # 判定（設計書 §6 をぼかし基準で補正したもの）:
 #   H_band：細い帯（見かけ幅 ≲3px）で X が 1 を run 間ばらつきの外まで超え、太い側（≳12px）で X≈1
 #   H_indep：全幅で X≈1（細い帯の誤差は「ぼかしが2本の境界に掛かった分」で説明できる）
-# 使い方: python3 collect_probe.py <exp> [--iter 30000]
+# 使い方: python3 collect_probe.py <exp> [--iter 30000] [--split train]
 #   → <exp>/gt/probe_eval/summary.csv（モデル×半径の表）と figs/probe_band_vs_halfplane.png（このdir）
+#   --split train は probe_eval_train/ を読み、図は probe_band_vs_halfplane_train.png
 import argparse
 import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# probe_eval*/ にある集計側の出力（評価 CSV ではないので読まない）
+AUX_CSV = {"summary.csv", "bootstrap_X.csv", "per_object_X.csv", "presence.csv"}
 
 HERE = Path(__file__).parent
 
@@ -41,9 +45,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("exp")
     ap.add_argument("--iter", type=int, default=30000)
+    ap.add_argument("--split", choices=["test", "train"], default="test")
     a = ap.parse_args()
-    d = Path(a.exp) / "gt" / "probe_eval"
-    df = pd.concat([pd.read_csv(p) for p in sorted(d.glob("*.csv")) if p.name != "summary.csv"], ignore_index=True)
+    d = Path(a.exp) / "gt" / ("probe_eval" if a.split == "test" else "probe_eval_train")
+    df = pd.concat([pd.read_csv(p) for p in sorted(d.glob("*.csv")) if p.name not in AUX_CSV], ignore_index=True)
     po = per_object(df)
     rt = ratio_table(po)
 
@@ -107,8 +112,9 @@ def main():
             ax[1].plot(t.width_px, t.X, marker="o", label=m)
         for x in ax:
             x.set_xscale("log")
+            x.set_yscale("log")   # 消失した物体（§9as：R≈10〜70）があっても太い側が読めるように
             x.axhline(1, color="k", lw=0.8)
-            x.set_xlabel("apparent width [px] (median over test views)")
+            x.set_xlabel(f"apparent width [px] (median over {a.split} views)")
         ax[0].set_ylabel("R = e_cylinder / e_plate (per boundary)")
         ax[0].set_title("per-boundary error vs half-plane (grey: GT blurred by σ)")
         ax[1].set_ylabel("X = R_model / R_blur(σ_fit)")
@@ -117,8 +123,9 @@ def main():
             ax[1].legend(fontsize=7)
         fig.tight_layout()
         (HERE / "figs").mkdir(exist_ok=True)
-        fig.savefig(HERE / "figs" / "probe_band_vs_halfplane.png", dpi=130)
-        print(f"\n図: {HERE / 'figs' / 'probe_band_vs_halfplane.png'}")
+        fn = "probe_band_vs_halfplane" + ("" if a.split == "test" else "_train") + ".png"
+        fig.savefig(HERE / "figs" / fn, dpi=130)
+        print(f"\n図: {HERE / 'figs' / fn}")
     except Exception as e:
         print("図の作成に失敗:", e)
     print(f"保存: {d / 'summary.csv'}")
