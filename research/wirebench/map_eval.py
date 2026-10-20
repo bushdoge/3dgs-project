@@ -65,12 +65,13 @@ def inside_any(Q, mu, cov, smax, thr, infl2=0.0, chunk=400000):
         cnt = np.fromiter((len(x) for x in nb), int, len(nb))
         if cnt.sum() == 0:
             continue
-        gi = np.repeat(g, cnt)
-        qi = np.fromiter((j for x in nb for j in x), int, cnt.sum())
-        for t in range(0, len(gi), 2_000_000):
-            a, b = gi[t:t + 2_000_000], qi[t:t + 2_000_000]
-            inv = np.linalg.inv(cov[a] + infl2 * np.eye(3))
-            d = Q[b] - mu[a]
+        invg = np.linalg.inv(cov[g] + infl2 * np.eye(3))       # ガウシアンごとに1回だけ逆行列
+        gl = np.repeat(np.arange(len(g)), cnt)
+        qi = np.concatenate([np.asarray(x, int) for x in nb if len(x)])
+        for t in range(0, len(gl), 2_000_000):
+            la, b = gl[t:t + 2_000_000], qi[t:t + 2_000_000]
+            inv = invg[la]
+            d = Q[b] - mu[g[la]]
             m2 = np.einsum("ni,nij,nj->n", d, inv, d)
             hit[b[m2 <= thr]] = True
     return hit

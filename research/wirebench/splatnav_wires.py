@@ -41,6 +41,70 @@ from wbgeom import align_colmap_to_gt                      # noqa: E402
 from map_eval import wire_polylines                        # noqa: E402
 
 DEV = torch.device("cpu")
+
+
+def fast_navigable_grid(self, unfold=True, chunk=None):
+    """GSplatVoxel.create_navigable_grid と同じ占有（各ガウシアンの1σ軸平行箱が重なるセルを占有→機体半径で膨張）を、
+    箱の再帰的な2分割をせずにセルの添字範囲を直接塗って作る。元実装は大きなガウシアン（空の塊）×細かい格子で
+    分割数が爆発する（実データの 37m 空域・10cm 格子で 2 時間超）ので、実データ用に置き換える。
+    合成で元実装と占有が一致することを確認済み（研究メモ §9av）。"""
+    import unfoldNd
+    R = self.resolution
+    self.non_navigable_grid = torch.zeros((R[0], R[1], R[2]), dtype=bool, device=self.device)
+    X, Y, Z = torch.meshgrid(
+        torch.linspace(self.lower_bound[0] + self.cell_sizes[0] / 2, self.upper_bound[0] - self.cell_sizes[0] / 2, R[0], device=self.device),
+        torch.linspace(self.lower_bound[1] + self.cell_sizes[1] / 2, self.upper_bound[1] - self.cell_sizes[1] / 2, R[1], device=self.device),
+        torch.linspace(self.lower_bound[2] + self.cell_sizes[2] / 2, self.upper_bound[2] - self.cell_sizes[2] / 2, R[2], device=self.device),
+        indexing="ij")
+    self.grid_centers = torch.stack([X, Y, Z], dim=-1)
+    half = torch.sqrt(torch.diagonal(self.gsplat.covs, dim1=1, dim2=2))
+    if not unfold:
+        half = half + self.radius
+    c0 = self.grid_centers[0, 0, 0]
+    lo = torch.round((self.gsplat.means - half - c0) / self.cell_sizes).to(int).numpy()
+    hi = torch.round((self.gsplat.means + half - c0) / self.cell_sizes).to(int).numpy()
+    mx = (R - 1).numpy() if torch.is_tensor(R) else np.array(R) - 1
+    ok = np.all(hi >= 0, 1) & np.all(lo <= mx, 1)
+    lo, hi = np.clip(lo[ok], 0, mx), np.clip(hi[ok], 0, mx)
+    g = self.non_navigable_grid.numpy()
+    for (a0, a1, a2), (b0, b1, b2) in zip(lo, hi):
+        g[a0:b0 + 1, a1:b1 + 1, a2:b2 + 1] = True
+    if unfold:
+        kernel_size = tuple(self.robot_mask.shape)
+        padding = tuple((torch.tensor(self.robot_mask.shape) - 1) // 2)
+        lib_module = unfoldNd.UnfoldNd(kernel_size, dilation=1, padding=padding, stride=1)
+        unfolded = lib_module(self.non_navigable_grid.to(dtype=torch.float32)[None, None]).squeeze().to(dtype=bool)
+        unfolded = unfolded[self.robot_mask.reshape(-1)]
+        self.non_navigable_grid = torch.any(unfolded, dim=0).reshape(R[0], R[1], R[2])
+
+
+def use_fast_voxel():
+    from initialization.grid_utils import GSplatVoxel
+    GSplatVoxel.create_navigable_grid = fast_navigable_grid
+
+
+def ellip_navigable_grid(self, unfold=True, chunk=None):
+    """A* の格子を「セル中心が1σ楕円体（Σ+κ²I）の中にあるセルだけ占有」で作る（軸平行の外接箱で膨らませない）。
+    Splat-Nav の元実装（外接箱→機体半径で膨張）は、斜めに傾いた大きなガウシアン（空の塊）で占有を何倍にも水増しする（§9av）。
+    経路の安全は第2段（楕円体と球の厳密な交差判定による凸多面体）が保証するので、第1段は通れるかの判定だけに使う。"""
+    from map_eval import inside_any
+    R = [int(r) for r in self.resolution]
+    X, Y, Z = torch.meshgrid(
+        torch.linspace(self.lower_bound[0] + self.cell_sizes[0] / 2, self.upper_bound[0] - self.cell_sizes[0] / 2, R[0], device=self.device),
+        torch.linspace(self.lower_bound[1] + self.cell_sizes[1] / 2, self.upper_bound[1] - self.cell_sizes[1] / 2, R[1], device=self.device),
+        torch.linspace(self.lower_bound[2] + self.cell_sizes[2] / 2, self.upper_bound[2] - self.cell_sizes[2] / 2, R[2], device=self.device),
+        indexing="ij")
+    self.grid_centers = torch.stack([X, Y, Z], dim=-1)
+    Q = self.grid_centers.reshape(-1, 3).numpy().astype(np.float64)
+    cov = self.gsplat.covs.numpy().astype(np.float64)
+    smax = self.gsplat.scales.numpy().astype(np.float64).max(1)
+    occ = inside_any(Q, self.gsplat.means.numpy().astype(np.float64), cov, smax, 1.0, infl2=self.radius ** 2, chunk=5000)
+    self.non_navigable_grid = torch.tensor(occ.reshape(R), dtype=bool)
+
+
+def use_ellip_voxel():
+    from initialization.grid_utils import GSplatVoxel
+    GSplatVoxel.create_navigable_grid = ellip_navigable_grid
 LOWER = np.array([-3.0, -3.3, 1.8])
 UPPER = np.array([3.0, 0.3, 5.0])
 MIN_SCALE = 1e-4     # 2DGS（厚み0）や極端に薄いガウシアンの下限[m]（Splat-Plan は 1/scale を使う）
@@ -114,7 +178,11 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out")
     ap.add_argument("--gt-only", action="store_true", help="既存 csv の GT 地図の行だけ計算し直す")
+    ap.add_argument("--voxel", choices=["orig", "ellip"], default="orig",
+                    help="A* の格子：orig＝Splat-Nav の元実装（外接箱）／ellip＝セル中心が楕円体の中のセルだけ（§9av）")
     a = ap.parse_args()
+    if a.voxel == "ellip":
+        use_ellip_voxel()
     exp = Path(a.exp).resolve()
     al = align_colmap_to_gt(exp, pycolmap.Reconstruction(str(exp / "sparse" / "0")))
     wires, R = wire_polylines(exp)
@@ -130,7 +198,7 @@ def main():
     # 単位四元数ちょうどは Splat-Nav の quaternion_to_angle_axis で NaN になり障害物が消える（等方なので小さく回しても形は同じ）
     qg = np.tile([np.cos(0.05), np.sin(0.05), 0, 0], (len(W), 1))
     maps = [("gt_wires", None, Map(W, qg, np.full((len(W), 3), R)))]
-    out = Path(a.out) if a.out else exp / "gt" / "splatnav_wires.csv"
+    out = Path(a.out) if a.out else exp / "gt" / ("splatnav_wires.csv" if a.voxel == "orig" else "splatnav_wires_ellip.csv")
     prev = None
     if a.gt_only:   # 既存の結果の GT 行だけ作り直し、経路長比を付け直す
         prev = pd.read_csv(out)
