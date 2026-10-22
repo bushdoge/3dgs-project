@@ -178,6 +178,8 @@ def main():
     ap.add_argument("--min-sep", type=float, default=5.0)
     ap.add_argument("--opacity-thr", type=float, nargs="+", default=[0.0, 0.1, 0.5])
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--views", choices=["all", "odd"], default="all")
+    ap.add_argument("--out-suffix", default="")
     a = ap.parse_args()
     exp = Path(a.exp).resolve()
     rng = np.random.default_rng(a.seed)
@@ -185,11 +187,13 @@ def main():
     if a.mode == "synth":
         al = SW.align_colmap_to_gt(exp, rec)
         cams = cameras_synth(exp, observations(rec))
-        out = exp / "gt" / "sky_carve.csv"
+        out = exp / "gt" / f"sky_carve{a.out_suffix}.csv"
     else:
         al, _, _ = camera_frame(rec, a.cam_height)
         cams = cameras_real(exp, (al, rec), observations(rec))
-        out = exp / "sky_carve.csv"
+        out = exp / f"sky_carve{a.out_suffix}.csv"
+    if a.views == "odd":       # sky_prune.py --views even で除去した地図を、除去に使っていない視点だけで評価する
+        cams = cams[1::2]
     Cs = np.array([c[0] for c in cams])
     z0 = Cs[:, 2].mean()
     t0 = time.time()
@@ -222,6 +226,19 @@ def main():
         if np.linalg.norm(comp[i] - comp[j]) * a.cell >= a.min_sep:
             pairs.append((comp[i], comp[j]))
     centers = lower + a.cell * (np.argwhere(np.ones(res, bool)) + 0.5)
+    # 電線：合成は GT、実データは wire3d.py の復元（wire3d_bright.npz）。電線の点を含むセル＝「電線セル」
+    wire_pts = None
+    if a.mode == "synth":
+        wires_, _ = SW.wire_polylines(exp)
+        wire_pts = np.concatenate(wires_)
+    elif (exp / "wire3d_bright.npz").exists():
+        wire_pts = np.load(exp / "wire3d_bright.npz")["points"]
+    wire_cells = np.zeros(res, bool)
+    if wire_pts is not None and len(wire_pts):
+        wi = np.floor((wire_pts - lower) / a.cell).astype(int)
+        okw = np.all((wi >= 0) & (wi < np.array(res)), 1)
+        wire_cells[wi[okw, 0], wi[okw, 1], wi[okw, 2]] = True
+        print(f"電線の点 {len(wire_pts)}・格子内の電線セル {wire_cells.sum()}", flush=True)
     print(f"(b) 格子 {res}・既知の空きセル {known.sum()}・最大の連結成分 {len(comp)} セル", flush=True)
 
     rows, arows = [], []
@@ -241,6 +258,8 @@ def main():
                 s = (h >= lo) & (h < hi)
                 row[f"occ_ellip_h{lo}_{hi}"] = float(hit_e[s].mean()) if s.any() else np.nan
                 row[f"occ_aabb_h{lo}_{hi}"] = float(hit_b[s].mean()) if s.any() else np.nan
+            if wire_pts is not None and len(wire_pts):   # 電線の点のうち楕円体（Σ+2cm²）に覆われた割合
+                row["wire_cover"] = float(inside_any(wire_pts, mu[k], cov[k], scc[k].max(1), 1.0, infl2=0.02 ** 2, chunk=5000).mean())
             rows.append(row)
             # (b) 地図の格子（楕円体／外接箱）で A*
             for gname in ("ellip", "aabb"):
@@ -249,6 +268,7 @@ def main():
                 else:
                     occ = inside_any_aabb(centers, mu[k], half[k], a.kappa).reshape(res)
                 ok_n = 0
+                cross_n = 0
                 for pi, (s_, g_) in enumerate(pairs):
                     if occ[tuple(s_)] or occ[tuple(g_)]:
                         path = None
@@ -258,12 +278,17 @@ def main():
                         path = path if len(path) else None
                         ends_blocked = False
                     ok_n += path is not None
+                    cross = bool(path is not None and wire_cells[path[:, 0], path[:, 1], path[:, 2]].any())
+                    cross_n += cross
                     arows.append({"exp": exp.name, "model": m, "opacity_thr": t_op, "grid": gname, "pair": pi,
-                                  "ok": path is not None, "ends_blocked": ends_blocked, "occ_grid": float(occ.mean())})
+                                  "ok": path is not None, "ends_blocked": ends_blocked, "occ_grid": float(occ.mean()),
+                                  "wire_cross": cross})
                 row[f"astar_ok_{gname}"] = ok_n / len(pairs)
+                row[f"wire_cross_{gname}"] = cross_n / max(ok_n, 1)     # 成功した経路のうち電線セルを通ったもの
             print(f"[{m} thr={t_op}] 空き点の占有 楕円体 {row['occ_ellip']:.3f}・外接箱 {row['occ_aabb']:.3f}（高さ帯 " +
                   " / ".join(f"{row[f'occ_ellip_h{lo}_{hi}']:.3f}" for lo, hi in BANDS) +
-                  f"）・A* 成功 楕円体 {row['astar_ok_ellip']:.2f} 外接箱 {row['astar_ok_aabb']:.2f}", flush=True)
+                  f"）・A* 成功 楕円体 {row['astar_ok_ellip']:.2f} 外接箱 {row['astar_ok_aabb']:.2f}・電線セル通過 楕円体 {row['wire_cross_ellip']:.2f} 外接箱 {row['wire_cross_aabb']:.2f}"
+                  + (f"・電線被覆 {row['wire_cover']:.3f}" if "wire_cover" in row else ""), flush=True)
     pd.DataFrame(rows).to_csv(out, index=False)
     pd.DataFrame(arows).to_csv(str(out).replace(".csv", "_astar.csv"), index=False)
     print(f"保存: {out}")
