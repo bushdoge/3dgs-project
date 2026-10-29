@@ -69,7 +69,7 @@ def fast_navigable_grid(self, unfold=True, chunk=None):
     g = self.non_navigable_grid.numpy()
     for (a0, a1, a2), (b0, b1, b2) in zip(lo, hi):
         g[a0:b0 + 1, a1:b1 + 1, a2:b2 + 1] = True
-    if unfold:
+    if unfold and self.robot_mask.numel() > 1:    # 機体の膨張が 1 セル未満（核 1×1×1）なら膨張しない（元実装はここで落ちる）
         kernel_size = tuple(self.robot_mask.shape)
         padding = tuple((torch.tensor(self.robot_mask.shape) - 1) // 2)
         lib_module = unfoldNd.UnfoldNd(kernel_size, dilation=1, padding=padding, stride=1)
