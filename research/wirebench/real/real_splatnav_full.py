@@ -135,6 +135,12 @@ def run(exp, model, pair_ids, kappa=KAPPA, pairs_file="splatnav_full_pairs.npz",
                 row["wire_collide"] = bool(dmin < kappa + 0.02)
             row["start_moved_m"] = float(np.linalg.norm(traj[0] - s))
             row["goal_moved_m"] = float(np.linalg.norm(traj[-1] - g))
+            # 経路の形を保存（電線の所を横切ったかを後で調べる。§9bb）
+            td = exp / "splatnav_traj"
+            td.mkdir(exist_ok=True)
+            tp = td / f"{Path(out_name).stem}__{model}__k{kappa}__w{int(add_wires)}__p{pi}.npy"
+            np.save(tp, traj)
+            row["traj_file"] = str(tp.relative_to(exp))
         with open(exp / out_name, "a") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(json.dumps(row, ensure_ascii=False), flush=True)
