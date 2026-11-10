@@ -40,8 +40,10 @@ BANDS = [(-99, 2), (2, 5), (5, 10), (10, 99)]   # カメラ平均高さからの
 
 
 def safe_sky(bgr, a, obs_uv=None):
-    """obs_uv：この画像で3D点を持つ SfM 特徴点の画素座標。空には特徴点が出ないので、特徴点を一定密度以上含む空候補の領域は空でないとみなす
-    （色と上端への連結だけだと、空の直下の青い壁が空とつながる。合成の最悪視点で適合率 0.54）"""
+    """「確かな空」の画素（1＝空）。obs_uv：この画像で3D点を持つ SfM 特徴点の画素座標。
+    色（青−赤>18・明るさ>150）→ 特徴点の周り --obs-dilate px を除く → 閉処理 --close px → 画像の上端（上 3%）につながる領域だけ
+    → --erode px 縮める → 電線（sky_and_wire）と暗い細線（ブラックハット>--bh-thr）の周り --wire-dilate px を除く → 画像端 --border px を除く。
+    合成で、この空の視線上の点に誤り 0/約150万（§9aw）。写真ごとの電線検出が取りこぼした所は空になる（§9bc。sky_prune.py --protect で対策）"""
     wm, sky, _ = sky_and_wire(bgr)
     v = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     bh = cv2.morphologyEx(v, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
