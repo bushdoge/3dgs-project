@@ -111,7 +111,7 @@ def main():
     ap.add_argument("--tight-tol", type=float, default=1.0, help="芯線抽出の投票の許容[px]")
     ap.add_argument("--nms", type=float, default=0.06, help="芯線抽出の近傍半径[m]")
     ap.add_argument("--nms-frac", type=float, default=0.95)
-    ap.add_argument("--views", choices=["all", "even"], default="all")
+    ap.add_argument("--views", choices=["all", "even", "odd"], default="all")
     ap.add_argument("--cam-height", type=float, default=1.4)
     ap.add_argument("--detector", choices=["color", "bright", "gtmask"], default="bright")
     ap.add_argument("--hmin", type=float, default=1.0, help="探す高さ：カメラ平均高さ＋hmin〜hmax [m]")
@@ -123,17 +123,20 @@ def main():
     if a.mode == "synth":
         from wbgeom import align_colmap_to_gt
         al = align_colmap_to_gt(exp, rec)
-        out = exp / "gt" / f"wire3d_{a.detector}{'_even' if a.views == 'even' else ''}.npz"
+        out = exp / "gt" / f"wire3d_{a.detector}{'' if a.views == 'all' else '_' + a.views}.npz"
     else:
         from real_splatnav import camera_frame
         al, _, _ = camera_frame(rec, a.cam_height)
-        out = exp / f"wire3d_{a.detector}{'_even' if a.views == 'even' else ''}.npz"
+        out = exp / f"wire3d_{a.detector}{'' if a.views == 'all' else '_' + a.views}.npz"
     to_frame = (al["s"], al["R"], al["t"])
     t0 = time.time()
     views = load_views(exp, rec, to_frame, a.detector)
     if a.views == "even":      # 偶数番で復元し、奇数番で検証する（--views even の後に holdout_check）
         held = views[1::2]
         views = views[::2]
+    elif a.views == "odd":     # 奇数番だけで復元（§9bd：偶数番で作った電線で守った後処理を、別の写真の電線で評価する）
+        held = views[::2]
+        views = views[1::2]
     C = np.array([al["s"] * (al["R"] @ (-(v.cam_from_world() if callable(v.cam_from_world) else v.cam_from_world).rotation.matrix().T
                                          @ np.asarray((v.cam_from_world() if callable(v.cam_from_world) else v.cam_from_world).translation))) + al["t"]
                   for v in sorted(rec.images.values(), key=lambda i: i.name)])
@@ -178,7 +181,7 @@ def main():
         W, H, Rr = W[sel], h2[sel], (h2[sel] / np.maximum(h2[sel] + m2[sel], 1))
     np.savez(out, points=W, hits=H, ratio=Rr, scale=al["s"])
     print(f"電線の点 {len(W)}（{time.time()-t0:.0f}s）→ {out}", flush=True)
-    if a.views == "even" and len(W):
+    if a.views != "all" and len(W):
         # 使っていない奇数番の視点に投影し、写る点のうち検出した電線の画素から 3px 以内に落ちる割合（視点ごとの中央値）
         fr = []
         for A, b, fx, fy, cx, cy, dt, sky, nw in held:

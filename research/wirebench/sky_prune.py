@@ -47,6 +47,8 @@ def main():
     ap.add_argument("--ratio", type=float, default=0.0)
     ap.add_argument("--min-votes", type=int, default=2)
     ap.add_argument("--suffix", default="_skyprune")
+    ap.add_argument("--protect", help="3D 電線（wire3d.py の npz）。各写真に投影し、その周り --protect-px を確かな空から外す（§9bd）")
+    ap.add_argument("--protect-px", type=int, default=8)
     a = ap.parse_args()
     # safe_sky は sky_carve にあるが、Splat-Nav を import しないよう関数だけ読み込む
     src = (HERE / "sky_carve.py").read_text()
@@ -57,6 +59,13 @@ def main():
 
     exp = Path(a.exp).resolve()
     rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
+    Wc = None
+    if a.protect:   # 3D 電線は real_splatnav.camera_frame の座標（m）なので COLMAP 座標へ戻す
+        sys.path.insert(0, str(HERE / "real"))
+        from real_splatnav import camera_frame
+        al, _, _ = camera_frame(rec, 1.4)
+        Wm = np.load(exp / a.protect)["points"]
+        Wc = (al["R"].T @ ((Wm - al["t"]) / al["s"]).T).T
     ims = sorted(rec.images.values(), key=lambda i: i.name)
     if a.views == "even":
         ims = ims[::2]
@@ -72,6 +81,18 @@ def main():
         lab = np.zeros(sky_color.shape, np.int8)     # 1＝空、−1＝空でない、0＝数えない
         lab[s > 0] = 1
         lab[sky_color == 0] = -1
+        if Wc is not None:      # 3D 電線の投影の周りは空から外す（写真ごとの電線検出の取りこぼし対策）
+            R_, t_ = cfw.rotation.matrix(), np.asarray(cfw.translation)
+            pw = Wc @ R_.T + t_
+            okw = pw[:, 2] > 0.3
+            uw = (fx * pw[okw, 0] / pw[okw, 2] + cx).astype(int)
+            vw = (fy * pw[okw, 1] / pw[okw, 2] + cy).astype(int)
+            H_, W_ = lab.shape
+            inn = (uw >= 0) & (uw < W_) & (vw >= 0) & (vw < H_)
+            pm = np.zeros((H_, W_), np.uint8)
+            pm[vw[inn], uw[inn]] = 1
+            pm = cv2.dilate(pm, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * a.protect_px + 1,) * 2))
+            lab[(pm > 0) & (lab == 1)] = 0
         views.append((cfw.rotation.matrix(), np.asarray(cfw.translation), fx, fy, cx, cy, lab))
     print(f"{exp.name}: 視点 {len(views)}（{a.views}）", flush=True)
     for m in a.models:

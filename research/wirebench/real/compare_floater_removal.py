@@ -39,6 +39,8 @@ def main():
     ap.add_argument("exp")
     ap.add_argument("models", nargs="+")
     ap.add_argument("--kappa", type=float, default=0.25)
+    ap.add_argument("--wire-file", default="wire3d_bright.npz", help="電線の被覆を測る 3D 電線（§9bd では奇数番だけで復元した wire3d_bright_odd.npz）")
+    ap.add_argument("--out-suffix", default="")
     a = ap.parse_args()
     exp = Path(a.exp).resolve()
     rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
@@ -47,14 +49,17 @@ def main():
     ca = argparse.Namespace(stride=12, erode=4, wire_dilate=6, bh_thr=12, border=8, obs_dilate=40, close=9,
                             dmin=0.5, dmax=15.0, dstep=0.25, max_points=200000)
     P, _ = SC.carve(cams, ca, np.random.default_rng(0))
-    W = np.load(exp / "wire3d_bright.npz")["points"]
+    W = np.load(exp / a.wire_file)["points"]
     rows = []
     for m in a.models:
         mu, cov, smax, op = gauss(exp, m, al)
         heur = (op < 0.1) & (smax > 5.0 * np.median(smax))
-        mu2, cov2, smax2, _ = gauss(exp, f"{m}_skyprune", al)
-        for name, (M, Cv, S) in {"none": (mu, cov, smax), "heur": (mu[~heur], cov[~heur], smax[~heur]),
-                                  "skyprune": (mu2, cov2, smax2)}.items():
+        variants = {"none": (mu, cov, smax), "heur": (mu[~heur], cov[~heur], smax[~heur])}
+        for suf in ("skyprune", "skyprune_wp"):       # skyprune_wp＝3D 電線で確かな空を守った版（§9bd）
+            if (exp / f"{m}_{suf}").exists():
+                mu2, cov2, smax2, _ = gauss(exp, f"{m}_{suf}", al)
+                variants[suf] = (mu2, cov2, smax2)
+        for name, (M, Cv, S) in variants.items():
             rows.append({"exp": exp.name, "model": m, "method": name, "n_gauss": len(M),
                          "n_removed": int(len(mu) - len(M)),
                          "wire_cover": float(inside_any(W, M, Cv, S, 1.0, infl2=0.02 ** 2, chunk=5000).mean()),
@@ -63,7 +68,7 @@ def main():
         # 経験則で捨てたものの性質
         print(f"  {m}: 経験則で捨てた {heur.sum()} 個（一番長い軸の中央値の5倍＝{5*np.median(smax):.3f}m 超・不透明度<0.1）", flush=True)
     df = pd.DataFrame(rows)
-    df.to_csv(exp / "compare_floater_removal.csv", index=False)
+    df.to_csv(exp / f"compare_floater_removal{a.out_suffix}.csv", index=False)
     pd.set_option("display.width", 200)
     print(df.round(4).to_string(index=False))
 
