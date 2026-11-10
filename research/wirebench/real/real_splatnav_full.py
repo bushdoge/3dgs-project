@@ -33,10 +33,14 @@ GRID = 0.15      # Splat-Nav の A* の格子。0.2 だと機体半径 0.1 の�
 KAPPA = 0.1
 
 
-def prepare(exp, n_pairs, seed):
+def pick_views(cams, views):
+    return cams[1::2] if views == "odd" else (cams[::2] if views == "even" else cams)
+
+
+def prepare(exp, n_pairs, seed, views="all", out="splatnav_full_pairs.npz"):
     rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
     al, _, _ = camera_frame(rec, 1.4)
-    cams = SC.cameras_real(exp, (al, rec), SC.observations(rec))
+    cams = pick_views(SC.cameras_real(exp, (al, rec), SC.observations(rec)), views)
     a = argparse.Namespace(stride=12, erode=4, wire_dilate=6, bh_thr=12, border=8, obs_dilate=40, close=9,
                            dmin=0.5, dmax=15.0, dstep=0.25, max_points=400000)
     rng = np.random.default_rng(seed)
@@ -55,21 +59,21 @@ def prepare(exp, n_pairs, seed):
         if np.linalg.norm(comp[i] - comp[j]) * CELL >= 5.0:
             pairs.append((comp[i], comp[j]))
     pts = np.array([[lower + CELL * (s + 0.5), lower + CELL * (g + 0.5)] for s, g in pairs])
-    np.savez(exp / "splatnav_full_pairs.npz", lower=lower, upper=lower + CELL * res, pairs=pts, scale=al["s"])
-    print(f"{exp.name}: 空き点 {len(P)}・空域 {np.round(CELL * res, 1)}m・組 {len(pts)} → {exp / 'splatnav_full_pairs.npz'}")
+    np.savez(exp / out, lower=lower, upper=lower + CELL * res, pairs=pts, scale=al["s"])
+    print(f"{exp.name}: 空き点 {len(P)}・空域 {np.round(CELL * res, 1)}m・組 {len(pts)} → {exp / out}")
 
 
-def prepare_cross(exp, n_pairs, seed, min_wire=1.0, near=0.3):
+def prepare_cross(exp, n_pairs, seed, min_wire=1.0, near=0.3, views="all", out="splatnav_cross_pairs.npz", wire_file="wire3d_bright.npz"):
     """電線をまたぐ組：既知の空き点（空の視線）から、電線の点より min_wire m 以上離れた2点で、
     結ぶ線分が電線の点の near m 以内を通るもの（まっすぐ飛ぶと電線に当たる組）"""
     rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
     al, _, _ = camera_frame(rec, 1.4)
-    cams = SC.cameras_real(exp, (al, rec), SC.observations(rec))
+    cams = pick_views(SC.cameras_real(exp, (al, rec), SC.observations(rec)), views)
     a = argparse.Namespace(stride=12, erode=4, wire_dilate=6, bh_thr=12, border=8, obs_dilate=40, close=9,
                            dmin=0.5, dmax=15.0, dstep=0.25, max_points=400000)
     rng = np.random.default_rng(seed)
     P, _ = SC.carve(cams, a, rng)
-    W = np.load(exp / "wire3d_bright.npz")["points"]
+    W = np.load(exp / wire_file)["points"]
     wt = cKDTree(W)
     S = np.array([p.xyz for p in rec.points3D.values()])
     S = (al["s"] * (al["R"] @ S.T)).T + al["t"]
@@ -90,11 +94,12 @@ def prepare_cross(exp, n_pairs, seed, min_wire=1.0, near=0.3):
     pts = np.array(pairs)
     lower = np.minimum(P.min(0), W.min(0)) - CELL
     upper = np.maximum(P.max(0), W.max(0)) + CELL
-    np.savez(exp / "splatnav_cross_pairs.npz", lower=lower, upper=upper, pairs=pts, scale=al["s"])
-    print(f"{exp.name}: 電線をまたぐ組 {len(pts)}（試行 {tries}）・空域 {np.round(upper - lower, 1)}m → {exp / 'splatnav_cross_pairs.npz'}")
+    np.savez(exp / out, lower=lower, upper=upper, pairs=pts, scale=al["s"])
+    print(f"{exp.name}: 電線をまたぐ組 {len(pts)}（試行 {tries}）・空域 {np.round(upper - lower, 1)}m → {exp / out}")
 
 
-def run(exp, model, pair_ids, kappa=KAPPA, pairs_file="splatnav_full_pairs.npz", add_wires=False, out_name="splatnav_full_g015.jsonl"):
+def run(exp, model, pair_ids, kappa=KAPPA, pairs_file="splatnav_full_pairs.npz", add_wires=False, out_name="splatnav_full_g015.jsonl",
+        wire_eval="wire3d_bright.npz"):
     SW.use_fast_voxel()
     rec = pycolmap.Reconstruction(str(exp / "sparse" / "0"))
     al, _, _ = camera_frame(rec, 1.4)
@@ -117,7 +122,7 @@ def run(exp, model, pair_ids, kappa=KAPPA, pairs_file="splatnav_full_pairs.npz",
     t0 = time.time()
     planner = SW.SplatPlan(mp, {"radius": kappa, "vmax": 0.1, "amax": 0.1}, voxel, SW.SplinePlanner(spline_deg=6, device=SW.DEV), SW.DEV)
     t_build = time.time() - t0
-    wp = exp / "wire3d_bright.npz"
+    wp = exp / wire_eval
     wtree = cKDTree(np.load(wp)["points"]) if wp.exists() else None
     for pi in pair_ids:
         s, g = pairs[pi]
@@ -138,7 +143,8 @@ def run(exp, model, pair_ids, kappa=KAPPA, pairs_file="splatnav_full_pairs.npz",
             # 経路の形を保存（電線の所を横切ったかを後で調べる。§9bb）
             td = exp / "splatnav_traj"
             td.mkdir(exist_ok=True)
-            tp = td / f"{Path(out_name).stem}__{model}__k{kappa}__w{int(add_wires)}__p{pi}.npy"
+            # 組の種類（pairs_file）も名前に入れる（入れていなかったため同じ out_name で2種類の組を回すと上書きされた。§9be）
+            tp = td / f"{Path(out_name).stem}__{Path(pairs_file).stem}__{model}__k{kappa}__w{int(add_wires)}__p{pi}.npy"
             np.save(tp, traj)
             row["traj_file"] = str(tp.relative_to(exp))
         with open(exp / out_name, "a") as fh:
@@ -159,14 +165,17 @@ def main():
     ap.add_argument("--pairs-file", default="splatnav_full_pairs.npz")
     ap.add_argument("--add-wires", action="store_true")
     ap.add_argument("--out-name", default="splatnav_full_g015.jsonl")
+    ap.add_argument("--views", choices=["all", "odd", "even"], default="all", help="--prepare(-cross) で空き点を作る写真")
+    ap.add_argument("--pairs-out")
+    ap.add_argument("--wire-file", default="wire3d_bright.npz", help="--prepare-cross で使う電線／--run で衝突を測る電線")
     a = ap.parse_args()
     exp = Path(a.exp).resolve()
     if a.prepare:
-        prepare(exp, a.n_pairs, a.seed)
+        prepare(exp, a.n_pairs, a.seed, a.views, a.pairs_out or "splatnav_full_pairs.npz")
     elif a.prepare_cross:
-        prepare_cross(exp, a.n_pairs, a.seed)
+        prepare_cross(exp, a.n_pairs, a.seed, views=a.views, out=a.pairs_out or "splatnav_cross_pairs.npz", wire_file=a.wire_file)
     else:
-        run(exp, a.model, a.pairs, a.kappa, a.pairs_file, a.add_wires, a.out_name)
+        run(exp, a.model, a.pairs, a.kappa, a.pairs_file, a.add_wires, a.out_name, a.wire_file)
 
 
 if __name__ == "__main__":
